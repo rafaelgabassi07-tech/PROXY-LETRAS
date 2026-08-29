@@ -13,6 +13,10 @@ async function main() {
   assert.equal(health.status, 200);
   assert.equal(health.body.status, 'online');
   assert.ok(health.body.activeProviders.includes('database'));
+  assert.ok(health.body.activeProviders.includes('vagalume'));
+  assert.ok(health.body.activeProviders.includes('genius'));
+  assert.equal(health.body.providerModes.vagalume, 'web-glx');
+  assert.equal(health.body.providerModes.genius, 'web-search+glx');
   assert.equal(health.body.scraperEngine.name, EXTRACTION_ENGINE_NAME);
   assert.equal(health.body.scraperEngine.version, EXTRACTION_ENGINE_VERSION);
   assert.ok(health.body.capabilities.includes('dual-dom-parser'));
@@ -82,6 +86,43 @@ async function main() {
           { status: 200, headers: { 'content-type': 'text/html; charset=utf-8' } },
         );
       }
+      if (url.includes('genius.com/api/search/multi')) {
+        return new Response(JSON.stringify({ response: { sections: [{ hits: [{ result: {
+          id: 901,
+          title: 'Canção Genius',
+          artist_names: 'Ministério Genius',
+          url: 'https://genius.com/Ministerio-genius-cancao-genius-lyrics'
+        } }] }] } }), { status: 200, headers: { 'content-type': 'application/json' } });
+      }
+      if (url === 'https://genius.com/Ministerio-genius-cancao-genius-lyrics') {
+        return new Response(
+          '<html><head><meta property="og:title" content="Canção Genius by Ministério Genius"></head><body><div data-lyrics-container="true">Verso de adoração suficientemente longo para o motor próprio identificar o conteúdo.<br>Jesus é esperança, graça e vida para todos os dias.<br>Refrão com louvor e fé repetido para validar a extração musical.<br>Outra linha extensa de conteúdo da canção para assegurar qualidade.</div></body></html>',
+          { status: 200, headers: { 'content-type': 'text/html; charset=utf-8' } },
+        );
+      }
+      if (url.includes('api.vagalume.com.br/search.excerpt')) {
+        return new Response(JSON.stringify({ response: { docs: [{
+          id: 'vg-77', title: 'Canção Vagalume (Ao Vivo)', band: 'Ministério Teste'
+        }] } }), { status: 200, headers: { 'content-type': 'application/json' } });
+      }
+      if (url === 'https://www.vagalume.com.br/ministerio-teste/cancao-vagalume-ao-vivo.html') {
+        return new Response('Não encontrado', { status: 404, headers: { 'content-type': 'text/html; charset=utf-8' } });
+      }
+      if (url === 'https://www.vagalume.com.br/ministerio-teste/') {
+        return new Response(
+          '<html><body><a href="/ministerio-teste/cancao-vagalume.html">Canção Vagalume</a><a href="/ministerio-teste/outra-musica.html">Outra Música</a></body></html>',
+          { status: 200, headers: { 'content-type': 'text/html; charset=utf-8' } },
+        );
+      }
+      if (url === 'https://www.vagalume.com.br/ministerio-teste/cancao-vagalume.html') {
+        return new Response(
+          '<html><head><meta property="og:title" content="Canção Vagalume - Ministério Teste"></head><body><main><div class="lyrics">Verso um de louvor com texto suficientemente amplo para o extrator.<br>Graça e esperança em Jesus aparecem nesta canção de teste.<br>Refrão de adoração ao Senhor com conteúdo musical significativo.<br>Última linha da letra para confirmar a recuperação completa.</div></main></body></html>',
+          { status: 200, headers: { 'content-type': 'text/html; charset=utf-8' } },
+        );
+      }
+      if (url.includes('vagalume.com.br/search/')) {
+        return new Response('<html><body>Carregando...</body></html>', { status: 200, headers: { 'content-type': 'text/html; charset=utf-8' } });
+      }
       throw new Error(`URL remota inesperada no self-test: ${url}`);
     };
 
@@ -117,6 +158,40 @@ async function main() {
     assert.equal(remoteGet.body.data.extraction.engine, EXTRACTION_ENGINE_NAME);
     assert.ok(remoteGet.body.data.extraction.quality.confidence > 0.5);
     assert.equal(remoteCalls, 2);
+
+    const geniusSearch = await handleApiRequest(
+      '/api/proxy/lyrics/search',
+      'POST',
+      { 'x-forwarded-for': 'selftest-genius-web' },
+      { query: 'Canção Genius', provider: 'genius', limit: 3 },
+    );
+    assert.equal(geniusSearch.status, 200);
+    assert.equal(geniusSearch.body.data[0]?.source, 'genius');
+    const geniusGet = await handleApiRequest(
+      '/api/proxy/lyrics/get',
+      'POST',
+      { 'x-forwarded-for': 'selftest-genius-web-get' },
+      { ...geniusSearch.body.data[0], provider: 'genius' },
+    );
+    assert.equal(geniusGet.status, 200);
+    assert.match(geniusGet.body.data.fullLyrics, /esperança/i);
+
+    const vagalumeSearch = await handleApiRequest(
+      '/api/proxy/lyrics/search',
+      'POST',
+      { 'x-forwarded-for': 'selftest-vagalume-web' },
+      { query: 'Canção Vagalume', artist: 'Ministério Teste', provider: 'vagalume', limit: 3 },
+    );
+    assert.equal(vagalumeSearch.status, 200);
+    assert.equal(vagalumeSearch.body.data[0]?.source, 'vagalume');
+    const vagalumeGet = await handleApiRequest(
+      '/api/proxy/lyrics/get',
+      'POST',
+      { 'x-forwarded-for': 'selftest-vagalume-web-get' },
+      { ...vagalumeSearch.body.data[0], provider: 'vagalume' },
+    );
+    assert.equal(vagalumeGet.status, 200);
+    assert.match(vagalumeGet.body.data.fullLyrics, /adoração/i);
   } finally {
     globalThis.fetch = originalFetch;
   }
@@ -172,7 +247,7 @@ async function main() {
     resetProviderHealth();
   }
 
-  console.log('PROXY_SELF_TEST_OK: GLX 3.1 dual-parser + ensemble + structured search/state + health + biblioteca local + scraping Letras + provider custom');
+  console.log('PROXY_SELF_TEST_OK: GLX 3.1 + health/provider modes + biblioteca local + Letras + Genius web + Vagalume web/API fallback + custom');
 }
 
 main().catch(error => {

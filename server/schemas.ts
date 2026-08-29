@@ -39,6 +39,7 @@ export const RawProxyRequestSchema = z.object({
 const providerBase = z.object({
   enabled: z.boolean().optional(),
   baseUrl: z.string().trim().url().max(1200).optional(),
+  webBaseUrl: z.string().trim().url().max(1200).optional(),
   timeoutMs: z.coerce.number().int().min(1000).max(15000).optional(),
 }).strict();
 

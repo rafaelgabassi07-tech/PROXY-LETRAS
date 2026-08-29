@@ -11,7 +11,10 @@ import {
   fetchScrapedSong,
   fetchVagalumeSong,
   searchGenius,
+  searchGeniusWeb,
   searchLetrasMusBr,
+  searchVagalumeExcerpt,
+  searchVagalumeWeb,
 } from './scrapers.ts';
 import type { GospelSong, SearchQuery, SearchResult } from './types.ts';
 
@@ -381,39 +384,69 @@ export async function searchGospelSongs(params: SearchQuery): Promise<{
         run: () => searchLetrasMusBr(config.providers.letrasMusBr.baseUrl, query, limit, config.providers.letrasMusBr.timeoutMs),
       });
     }
-    if (allow('genius') && config.providers.genius.enabled && config.providers.genius.accessToken && providerAvailable('genius')) {
+    if (allow('genius') && config.providers.genius.enabled && providerAvailable('genius')) {
       jobs.push({
         name: 'genius',
-        run: () => searchGenius(config.providers.genius.baseUrl, config.providers.genius.accessToken || '', query, limit, config.providers.genius.timeoutMs),
+        run: async () => {
+          if (config.providers.genius.accessToken) {
+            try {
+              const apiResults = await searchGenius(config.providers.genius.baseUrl, config.providers.genius.accessToken, query, limit, config.providers.genius.timeoutMs);
+              if (apiResults.length) return apiResults;
+            } catch { /* fallback web abaixo */ }
+          }
+          return searchGeniusWeb(config.providers.genius.webBaseUrl, query, limit, config.providers.genius.timeoutMs);
+        },
       });
     }
     if (allow('custom') && config.providers.customApi.enabled && providerAvailable('custom')) {
       jobs.push({ name: 'custom', run: () => customSearch(normalizedParams, limit) });
     }
-    if (allow('vagalume') && config.providers.vagalume.enabled && config.providers.vagalume.apiKey &&
-        normalizedParams.artist && (normalizedParams.title || normalizedParams.query) && providerAvailable('vagalume')) {
+    if (allow('vagalume') && config.providers.vagalume.enabled && providerAvailable('vagalume')) {
       jobs.push({
         name: 'vagalume',
         run: async () => {
-          const song = await fetchVagalumeSong(
-            config.providers.vagalume.baseUrl,
-            config.providers.vagalume.apiKey || '',
+          const titleQuery = normalizedParams.title || normalizedParams.query;
+          if (config.providers.vagalume.apiKey && normalizedParams.artist && titleQuery) {
+            try {
+              const song = await fetchVagalumeSong(
+                config.providers.vagalume.baseUrl,
+                config.providers.vagalume.apiKey,
+                normalizedParams.artist,
+                titleQuery,
+                config.providers.vagalume.timeoutMs
+              );
+              if (song) {
+                const enriched = enrichSong(song);
+                setInCache(cacheKey('lyrics-v2', { artist: song.artist, title: song.title, source: 'vagalume' }), enriched, 'lyrics');
+                return [{
+                  id: song.id,
+                  title: song.title,
+                  artist: song.artist,
+                  preview: 'Resultado confirmado pela API Vagalume',
+                  source: song.source,
+                  sourceUrl: song.sourceUrl,
+                  score: 94,
+                } satisfies SearchResult];
+              }
+            } catch { /* fallback web abaixo */ }
+          }
+          try {
+            const indexed = await searchVagalumeExcerpt(
+              config.providers.vagalume.baseUrl,
+              config.providers.vagalume.webBaseUrl,
+              query,
+              limit,
+              config.providers.vagalume.timeoutMs,
+            );
+            if (indexed.length) return indexed;
+          } catch { /* fallback HTML abaixo */ }
+          return searchVagalumeWeb(
+            config.providers.vagalume.webBaseUrl,
+            titleQuery || query,
             normalizedParams.artist,
-            normalizedParams.title || normalizedParams.query,
-            config.providers.vagalume.timeoutMs
+            limit,
+            config.providers.vagalume.timeoutMs,
           );
-          if (!song) return [];
-          const enriched = enrichSong(song);
-          setInCache(cacheKey('lyrics-v2', { artist: song.artist, title: song.title, source: 'vagalume' }), enriched, 'lyrics');
-          return [{
-            id: song.id,
-            title: song.title,
-            artist: song.artist,
-            preview: 'Resultado confirmado pela API Vagalume',
-            source: song.source,
-            sourceUrl: song.sourceUrl,
-            score: 92,
-          } satisfies SearchResult];
         },
       });
     }
@@ -494,10 +527,18 @@ export async function getGospelSongLyrics(params: LyricsRequest): Promise<{
     return { song, provider: 'database', cached: false };
   }
 
-  if (normalized.sourceUrl && ['genius', 'letras_mus_br'].includes(desiredProvider)) {
-    const source = desiredProvider === 'genius' || normalized.sourceUrl.includes('genius.com') ? 'genius' : 'letras_mus_br';
+  if (normalized.sourceUrl && ['genius', 'letras_mus_br', 'vagalume'].includes(desiredProvider)) {
+    const source = desiredProvider === 'genius' || normalized.sourceUrl.includes('genius.com')
+      ? 'genius'
+      : desiredProvider === 'vagalume' || normalized.sourceUrl.includes('vagalume.com.br')
+        ? 'vagalume'
+        : 'letras_mus_br';
     try {
-      const timeout = source === 'genius' ? config.providers.genius.timeoutMs : config.providers.letrasMusBr.timeoutMs;
+      const timeout = source === 'genius'
+        ? config.providers.genius.timeoutMs
+        : source === 'vagalume'
+          ? config.providers.vagalume.timeoutMs
+          : config.providers.letrasMusBr.timeoutMs;
       const scraped = await fetchScrapedSong(normalized.sourceUrl, source, timeout);
       if (scraped) {
         const song = enrichSong({
@@ -515,37 +556,94 @@ export async function getGospelSongLyrics(params: LyricsRequest): Promise<{
   }
 
   if ((desiredProvider === 'multi-provider' || desiredProvider === 'vagalume') &&
-      config.providers.vagalume.enabled && config.providers.vagalume.apiKey && normalized.artist && normalized.title) {
+      config.providers.vagalume.enabled && normalized.artist && normalized.title) {
+    if (config.providers.vagalume.apiKey) {
+      try {
+        const fetched = await fetchVagalumeSong(
+          config.providers.vagalume.baseUrl,
+          config.providers.vagalume.apiKey,
+          normalized.artist,
+          normalized.title,
+          config.providers.vagalume.timeoutMs
+        );
+        if (fetched) {
+          const song = enrichSong(fetched);
+          setInCache(key, song, 'lyrics');
+          providerSucceeded('vagalume');
+          return { song, provider: 'vagalume', cached: false };
+        }
+      } catch { /* fallback web abaixo */ }
+    }
     try {
-      const fetched = await fetchVagalumeSong(
-        config.providers.vagalume.baseUrl,
-        config.providers.vagalume.apiKey || '',
-        normalized.artist,
-        normalized.title,
-        config.providers.vagalume.timeoutMs
-      );
-      if (fetched) {
-        const song = enrichSong(fetched);
-        setInCache(key, song, 'lyrics');
-        providerSucceeded('vagalume');
-        return { song, provider: 'vagalume', cached: false };
+      let indexedMatches: SearchResult[] = [];
+      try {
+        indexedMatches = await searchVagalumeExcerpt(
+          config.providers.vagalume.baseUrl,
+          config.providers.vagalume.webBaseUrl,
+          `${normalized.artist} ${normalized.title}`.trim(),
+          4,
+          config.providers.vagalume.timeoutMs,
+        );
+      } catch { /* o índice sem chave é opcional; a página web continua disponível */ }
+
+      // O índice fornece metadados muito bons, mas o slug derivado nem sempre é a URL canônica.
+      // Cada candidato é validado individualmente; uma URL inválida não cancela o provider inteiro.
+      for (const match of indexedMatches) {
+        if (!match.sourceUrl) continue;
+        try {
+          const scraped = await fetchScrapedSong(match.sourceUrl, 'vagalume', config.providers.vagalume.timeoutMs);
+          if (scraped) {
+            const song = enrichSong({ ...scraped, title: normalized.title || scraped.title, artist: normalized.artist || scraped.artist });
+            setInCache(key, song, 'lyrics');
+            providerSucceeded('vagalume');
+            return { song, provider: 'vagalume', cached: false };
+          }
+        } catch { /* tenta o próximo índice e depois a descoberta web canônica */ }
       }
+
+      const webMatches = await searchVagalumeWeb(
+        config.providers.vagalume.webBaseUrl,
+        normalized.title,
+        normalized.artist,
+        6,
+        config.providers.vagalume.timeoutMs,
+      );
+      for (const match of webMatches) {
+        if (!match.sourceUrl) continue;
+        try {
+          const scraped = await fetchScrapedSong(match.sourceUrl, 'vagalume', config.providers.vagalume.timeoutMs);
+          if (scraped) {
+            const song = enrichSong({ ...scraped, title: normalized.title || scraped.title, artist: normalized.artist || scraped.artist });
+            setInCache(key, song, 'lyrics');
+            providerSucceeded('vagalume');
+            return { song, provider: 'vagalume', cached: false };
+          }
+        } catch { /* candidato web individual inválido; continua */ }
+      }
+      providerFailed('vagalume');
     } catch {
       providerFailed('vagalume');
     }
   }
 
   const query = [normalized.artist, normalized.title].filter(Boolean).join(' ').trim();
-  if (query && (desiredProvider === 'multi-provider' || desiredProvider === 'genius') &&
-      config.providers.genius.enabled && config.providers.genius.accessToken) {
+  if (query && (desiredProvider === 'multi-provider' || desiredProvider === 'genius') && config.providers.genius.enabled) {
     try {
-      const matches = await searchGenius(
-        config.providers.genius.baseUrl,
-        config.providers.genius.accessToken || '',
-        query,
-        3,
-        config.providers.genius.timeoutMs
-      );
+      let matches: SearchResult[] = [];
+      if (config.providers.genius.accessToken) {
+        try {
+          matches = await searchGenius(
+            config.providers.genius.baseUrl,
+            config.providers.genius.accessToken,
+            query,
+            3,
+            config.providers.genius.timeoutMs,
+          );
+        } catch { /* fallback web abaixo */ }
+      }
+      if (!matches.length) {
+        matches = await searchGeniusWeb(config.providers.genius.webBaseUrl, query, 3, config.providers.genius.timeoutMs);
+      }
       for (const match of matches) {
         if (!match.sourceUrl) continue;
         const scraped = await fetchScrapedSong(match.sourceUrl, 'genius', config.providers.genius.timeoutMs);

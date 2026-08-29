@@ -127,12 +127,14 @@ export interface ProxyConfig {
     vagalume: {
       enabled: boolean;
       baseUrl: string;
+      webBaseUrl: string;
       apiKey?: string;
       timeoutMs: number;
     };
     genius: {
       enabled: boolean;
       baseUrl: string;
+      webBaseUrl: string;
       accessToken?: string;
       timeoutMs: number;
     };

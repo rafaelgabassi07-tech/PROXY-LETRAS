@@ -1,4 +1,4 @@
-# Gospel Lyrics Proxy v2.4
+# Gospel Lyrics Proxy v2.5
 
 ## GLX Extraction Engine 3.1
 
@@ -28,8 +28,8 @@ Backend privado para a aba **Letras** do Harpa & Bíblia. Ele centraliza busca, 
 
 ## Recursos
 
-- busca multi-provider com biblioteca local + Letras.mus.br;
-- Vagalume e Genius quando as respectivas credenciais são configuradas;
+- busca multi-provider com biblioteca local + Letras.mus.br + Vagalume + Genius;
+- Vagalume e Genius continuam operacionais por fallback web quando não há credencial; as APIs são caminhos preferenciais quando configuradas;
 - endpoint customizado opcional;
 - GLX Extraction Engine 3.1 com ensemble multi-parser/multi-estratégia, dados estruturados, hydration state, análise estrutural, blocos contextuais e resgate adaptativo;
 - cache TTL limitado em memória e deduplicação de resultados;
@@ -47,14 +47,15 @@ npm install
 npm run dev
 ```
 
-O modo de desenvolvimento abre o painel Vite e os endpoints em `http://localhost:3000`. No emulador Android, o APK usa por padrão `http://10.0.2.2:3000`.
+O modo `npm run dev` abre somente o backend Express em `http://localhost:3000`. O painel Vite foi isolado em `web/` e usa `npm run web:dev`. O APK de produção usa por padrão `https://proxy-letras.vercel.app`; `10.0.2.2:3000` permanece apenas como override local de desenvolvimento.
 
 Para executar o servidor de produção:
 
 ```bash
-npm run build
 npm start
 ```
+
+Para gerar o painel estático opcional, instale também `web/` e execute `npm run web:build`.
 
 Copie `.env.example` para `.env` ou `.env.local` e preencha somente as credenciais dos provedores que quiser habilitar. O scraping do Letras.mus.br não exige token.
 
@@ -70,6 +71,23 @@ Copie `.env.example` para `.env` ou `.env.local` e preencha somente as credencia
 A URL do Proxy pode ser alterada no próprio cabeçalho da aba **Letras** no APK, sem recompilar o aplicativo.
 ## Produção no Vercel
 
-Endpoint oficial usado pelo APK: `https://proxy-letras.vercel.app`. O `server.ts` exporta o Express como `default`, permitindo detecção nativa do backend pelo Vercel/Fluid Compute, e só abre uma porta quando executado fora do Vercel. O runtime declarado é Node 24.x. O `vercel.json` força apenas o preset `express`; ele **não** declara `server.ts` em `functions`, porque a detecção zero-config do Express cria a função única automaticamente.
+Endpoint oficial usado pelo APK: `https://proxy-letras.vercel.app`. O `server.ts` exporta o Express como `default`, permitindo detecção nativa do backend pelo Vercel/Fluid Compute, e só abre uma porta quando executado fora do Vercel. O runtime declarado é Node 24.x. **Não existe `vercel.json`**: a implantação usa a detecção zero-config do Express e o `package.json` raiz não contém Vite/React nem script genérico `build`.
 
 Validação pós-deploy recomendada: `GET /api/health` deve responder `status: online` e informar a versão/recursos do GLX.
+
+
+## Fontes do motor 2.5
+
+O modo `multi-provider` usa os provedores em paralelo e deduplica os resultados:
+
+- **Biblioteca local**: dados embarcados no Proxy, sem rede.
+- **Letras.mus.br**: busca HTML/estado estruturado e extração GLX da URL exata.
+- **Vagalume**: `search.excerpt` para descoberta sem credencial quando disponível; API `search.php` é preferida com `VAGALUME_API_KEY`; páginas web `/artista/musica.html` são fallback e passam pelo GLX.
+- **Genius**: API oficial `api.genius.com/search` é preferida com `GENIUS_ACCESS_TOKEN`; sem token, tenta a busca pública web e usa GLX na página da música. Ambientes de datacenter podem receber bloqueio/captcha do Genius, portanto esse provedor nunca é o único caminho.
+- **Custom API**: opcional e desativada enquanto `CUSTOM_GOSPEL_API_URL` não for configurada.
+
+O `/api/health` expõe `activeProviders` e `providerModes` sem revelar chaves.
+
+## Vercel
+
+O backend Express é zero-config: `server.ts` e `package.json` ficam na raiz; o dashboard está isolado em `web/`. Não adicione `functions.server.ts`, rewrites para `/api` nem um script genérico `build` ao package raiz. Execute `npm run test:deploy` antes de publicar.

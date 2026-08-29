@@ -317,11 +317,22 @@ export async function handleApiRequest(
           defaultProvider: config.defaultProvider,
           activeProviders: [
             'database',
-            ...(config.providers.letrasMusBr.enabled ? ['letrasMusBr'] : []),
-            ...(config.providers.vagalume.enabled && config.providers.vagalume.apiKey ? ['vagalume'] : []),
-            ...(config.providers.genius.enabled && config.providers.genius.accessToken ? ['genius'] : []),
+            ...(config.providers.letrasMusBr.enabled ? ['letras_mus_br'] : []),
+            ...(config.providers.vagalume.enabled ? ['vagalume'] : []),
+            ...(config.providers.genius.enabled ? ['genius'] : []),
             ...(config.providers.customApi.enabled && config.providers.customApi.endpointUrl ? ['customApi'] : []),
           ],
+          providerModes: {
+            database: 'local',
+            letrasMusBr: config.providers.letrasMusBr.enabled ? 'web-glx' : 'disabled',
+            vagalume: config.providers.vagalume.enabled
+              ? (config.providers.vagalume.apiKey ? 'api+web-glx-fallback' : 'web-glx')
+              : 'disabled',
+            genius: config.providers.genius.enabled
+              ? (config.providers.genius.accessToken ? 'api+web-glx-fallback' : 'web-search+glx')
+              : 'disabled',
+            customApi: config.providers.customApi.enabled && config.providers.customApi.endpointUrl ? 'custom-api' : 'disabled',
+          },
           scraperEngine: {
             name: EXTRACTION_ENGINE_NAME,
             version: EXTRACTION_ENGINE_VERSION,
@@ -336,6 +347,7 @@ export async function handleApiRequest(
             'lru-cache',
             'zod-validation',
             'exact-source-retrieval',
+            'credentialless-web-fallbacks',
             'request-id',
           ],
           security: {

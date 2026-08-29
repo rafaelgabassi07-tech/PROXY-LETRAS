@@ -7,7 +7,7 @@ import {
 } from './extractionEngine.ts';
 import type { GospelSong, SearchResult } from './types.ts';
 
-const PROXY_API_USER_AGENT = `GospelLyricsProxy/2.4 GLX/${EXTRACTION_ENGINE_VERSION}`;
+const PROXY_API_USER_AGENT = `GospelLyricsProxy/2.5 GLX/${EXTRACTION_ENGINE_VERSION}`;
 
 const BROWSER_HEADERS: Record<string, string> = {
   Accept: 'text/html,application/xhtml+xml,application/json;q=0.9,*/*;q=0.8',
@@ -17,7 +17,7 @@ const BROWSER_HEADERS: Record<string, string> = {
   'Sec-Fetch-Mode': 'navigate',
   'Upgrade-Insecure-Requests': '1',
   'User-Agent':
-    'Mozilla/5.0 (Linux; Android 16) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/151 Mobile Safari/537.36 GospelLyricsProxy/2.4',
+    'Mozilla/5.0 (Linux; Android 16) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/151 Mobile Safari/537.36 GospelLyricsProxy/2.5',
 };
 
 const NAV_PATHS = new Set([
@@ -400,6 +400,242 @@ function parseAnchorResults(html: string, baseUrl: string, query: string, limit:
   return results.sort((a, b) => b.score - a.score).slice(0, limit);
 }
 
+
+function slugifySourcePart(value: string): string {
+  return value
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .toLocaleLowerCase('pt-BR')
+    .replace(/&/g, ' e ')
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/^-+|-+$/g, '');
+}
+
+function providerAnchorResult(
+  rawHref: string,
+  rawLabel: string,
+  base: URL,
+  query: string,
+  source: 'vagalume' | 'genius',
+  seen: Set<string>,
+): SearchResult | null {
+  const label = normalizeLyricsText(rawLabel.replace(/\s+/g, ' '));
+  if (label.length < 2 || label.length > 260) return null;
+
+  let url: URL;
+  try { url = new URL(decodeHtml(rawHref), base); } catch { return null; }
+  const allowedHosts = source === 'genius' ? ['genius.com'] : ['vagalume.com.br'];
+  if (!isAllowedLyricsUrl(url.toString(), allowedHosts)) return null;
+  if (source === 'vagalume' && !/\.html$/i.test(url.pathname)) return null;
+  if (source === 'genius' && !/-lyrics\/?$/i.test(url.pathname)) return null;
+
+  url.search = '';
+  url.hash = '';
+  const canonical = url.toString();
+  if (seen.has(canonical)) return null;
+
+  const terms = query.toLocaleLowerCase('pt-BR').split(/\s+/).filter(term => term.length > 1);
+  const searchable = `${label} ${decodeURIComponent(url.pathname)}`.toLocaleLowerCase('pt-BR').replace(/[-_]+/g, ' ');
+  const matchedTerms = terms.filter(term => searchable.includes(term)).length;
+  if (terms.length && matchedTerms === 0) return null;
+  seen.add(canonical);
+
+  const parts = url.pathname.split('/').filter(Boolean).map(part => part.replace(/\.html$/i, ''));
+  const split = label.split(/\s[-–—|]\s|\s+por\s+/i).map(part => part.trim()).filter(Boolean);
+  let artist = split[1] || '';
+  let title = split[0] || label;
+  if (source === 'vagalume' && parts.length >= 2) {
+    if (!artist) artist = parts[0].replace(/-/g, ' ').replace(/\b\w/g, char => char.toUpperCase());
+    if (!title || title.length < 2) title = parts[1].replace(/-/g, ' ').replace(/\b\w/g, char => char.toUpperCase());
+  }
+  if (source === 'genius' && /lyrics/i.test(title)) title = title.replace(/\s+lyrics\s*$/i, '').trim();
+
+  return {
+    id: stableId(source, canonical),
+    title,
+    artist: artist || 'Artista',
+    preview: source === 'vagalume'
+      ? 'Resultado encontrado no Vagalume. Toque para carregar a letra completa.'
+      : 'Resultado encontrado no Genius. Toque para carregar a letra completa.',
+    source,
+    sourceUrl: canonical,
+    score: 54 + matchedTerms * 9 + (matchedTerms === terms.length && terms.length ? 14 : 0),
+  };
+}
+
+function parseProviderSearchHtml(
+  html: string,
+  baseUrl: string,
+  query: string,
+  source: 'vagalume' | 'genius',
+  limit: number,
+): SearchResult[] {
+  const base = new URL(baseUrl);
+  const seen = new Set<string>();
+  const results: SearchResult[] = [];
+  for (const parser of ['parse5', 'htmlparser2'] as const) {
+    try {
+      const $ = parser === 'parse5'
+        ? load(html, { scriptingEnabled: false })
+        : load(html, { xml: { xmlMode: false, decodeEntities: true } });
+      $('a[href]').each((_index: number, element: any) => {
+        if (results.length >= limit * 8) return false;
+        const label = [$(element).text(), $(element).attr('aria-label'), $(element).attr('title')].filter(Boolean).join(' ');
+        const result = providerAnchorResult($(element).attr('href') || '', label, base, query, source, seen);
+        if (result) results.push(result);
+        return undefined;
+      });
+    } catch { /* outro parser/fallback continua */ }
+  }
+  if (results.length < limit) {
+    const pattern = /<a\b([^>]*?)href=["']([^"']+)["']([^>]*)>([\s\S]*?)<\/a>/gi;
+    let match: RegExpExecArray | null;
+    while ((match = pattern.exec(html)) !== null && results.length < limit * 10) {
+      const result = providerAnchorResult(match[2], htmlToText(match[4]), base, query, source, seen);
+      if (result) results.push(result);
+    }
+  }
+  return results.sort((a, b) => b.score - a.score).slice(0, limit);
+}
+
+export async function searchGeniusWeb(
+  webBaseUrl: string,
+  query: string,
+  limit: number,
+  timeoutMs: number,
+): Promise<SearchResult[]> {
+  const normalizedBase = webBaseUrl.replace(/\/+$/, '');
+  const baseHost = new URL(normalizedBase).hostname;
+  // A busca web JSON é preferida ao HTML porque /search pode ser renderizado no cliente.
+  // Mantemos dois formatos observados do próprio Genius para sobreviver a alterações incrementais.
+  const jsonEndpoints = [
+    `${normalizedBase}/api/search/multi?per_page=${Math.max(1, Math.min(limit, 10))}&q=${encodeURIComponent(query.trim())}`,
+    `${normalizedBase}/api/search/song?page=1&q=${encodeURIComponent(query.trim())}`,
+  ];
+  let endpointError: unknown;
+  for (const endpoint of jsonEndpoints) {
+    try {
+      const raw = await fetchText(endpoint, timeoutMs, { Accept: 'application/json' }, [baseHost]);
+      const data = JSON.parse(raw);
+      const response = data?.response || data;
+      const sections = Array.isArray(response?.sections) ? response.sections : [];
+      const sectionHits = sections.flatMap((section: any) => Array.isArray(section?.hits) ? section.hits : []);
+      const directHits = Array.isArray(response?.hits) ? response.hits : [];
+      const hits = sectionHits.length ? sectionHits : directHits;
+      const results = hits.map((hit: any, index: number): SearchResult | null => {
+        const result = hit?.result || hit;
+        const rawSourceUrl = result?.url || result?.path;
+        const sourceUrl = rawSourceUrl ? new URL(String(rawSourceUrl), normalizedBase).toString() : '';
+        if (!result?.title || !sourceUrl || !isAllowedLyricsUrl(sourceUrl, ['genius.com'])) return null;
+        return {
+          id: `genius-web-${String(result.id || index)}`,
+          title: String(result.title),
+          artist: String(result.artist_names || result.primary_artist?.name || result.artist?.name || 'Artista'),
+          preview: 'Resultado encontrado no Genius Web. Toque para carregar a letra completa.',
+          source: 'genius',
+          sourceUrl,
+          score: 78 - index,
+        };
+      }).filter(Boolean).slice(0, limit) as SearchResult[];
+      if (results.length) return results;
+    } catch (error) {
+      endpointError = error;
+    }
+  }
+
+  try {
+    const html = await fetchText(`${normalizedBase}/search?q=${encodeURIComponent(query.trim())}`, timeoutMs, {}, [baseHost]);
+    const results = parseProviderSearchHtml(html, normalizedBase, query, 'genius', limit);
+    if (results.length) return results;
+  } catch (error) {
+    if (!endpointError) endpointError = error;
+  }
+  if (endpointError) throw endpointError;
+  return [];
+}
+
+
+export async function searchVagalumeExcerpt(
+  apiBaseUrl: string,
+  webBaseUrl: string,
+  query: string,
+  limit: number,
+  timeoutMs: number,
+): Promise<SearchResult[]> {
+  const apiBase = apiBaseUrl.replace(/\/+$/, '');
+  const apiHost = new URL(apiBase).hostname;
+  const webBase = webBaseUrl.replace(/\/+$/, '');
+  const url = `${apiBase}/search.excerpt?q=${encodeURIComponent(query.trim())}&limit=${Math.max(1, Math.min(limit, 25))}`;
+  const raw = await fetchText(url, timeoutMs, { Accept: 'application/json' }, [apiHost]);
+  const data = JSON.parse(raw);
+  const docs = Array.isArray(data?.response?.docs) ? data.response.docs : [];
+  return docs.map((doc: any, index: number): SearchResult | null => {
+    const title = String(doc?.title || doc?.mus || doc?.name || '').trim();
+    const artist = String(doc?.band || doc?.artist || doc?.art || '').trim();
+    if (!title || !artist) return null;
+    const sourceUrl = `${webBase}/${slugifySourcePart(artist)}/${slugifySourcePart(title)}.html`;
+    return {
+      id: String(doc?.id || stableId('vagalume', sourceUrl)),
+      title,
+      artist,
+      preview: 'Resultado do índice de busca do Vagalume. A letra será validada pelo GLX.',
+      source: 'vagalume',
+      sourceUrl,
+      providerRef: typeof doc?.id === 'string' ? doc.id : undefined,
+      score: 80 - index,
+    };
+  }).filter(Boolean).slice(0, limit) as SearchResult[];
+}
+
+export async function searchVagalumeWeb(
+  webBaseUrl: string,
+  query: string,
+  artist: string,
+  limit: number,
+  timeoutMs: number,
+): Promise<SearchResult[]> {
+  const normalizedBase = webBaseUrl.replace(/\/+$/, '');
+  const baseHost = new URL(normalizedBase).hostname;
+  const searchUrls: string[] = [];
+  const artistSlug = slugifySourcePart(artist);
+  if (artistSlug) searchUrls.push(`${normalizedBase}/${artistSlug}/`);
+  searchUrls.push(`${normalizedBase}/search/?q=${encodeURIComponent(query.trim())}`);
+
+  let lastError: unknown;
+  for (const url of searchUrls) {
+    try {
+      const html = await fetchText(url, timeoutMs, {}, [baseHost]);
+      const results = parseProviderSearchHtml(html, normalizedBase, query, 'vagalume', limit);
+      if (results.length) return results;
+    } catch (error) {
+      lastError = error;
+    }
+  }
+
+  // Vagalume usa historicamente /artista/titulo.html. Quando artista e título são conhecidos,
+  // o último fallback valida diretamente essa URL em vez de devolver um palpite não verificado.
+  const titleSlug = slugifySourcePart(query);
+  if (artistSlug && titleSlug) {
+    const directUrl = `${normalizedBase}/${artistSlug}/${titleSlug}.html`;
+    try {
+      const song = await fetchScrapedSong(directUrl, 'vagalume', timeoutMs);
+      if (song) return [{
+        id: song.id,
+        title: song.title,
+        artist: song.artist,
+        preview: 'Resultado confirmado diretamente no Vagalume.',
+        source: 'vagalume',
+        sourceUrl: song.sourceUrl,
+        score: 86,
+      }];
+    } catch (error) {
+      lastError = error;
+    }
+  }
+  if (lastError) throw lastError;
+  return [];
+}
+
 export async function searchLetrasMusBr(
   baseUrl: string,
   query: string,
@@ -431,10 +667,10 @@ export async function searchLetrasMusBr(
 
 export async function fetchScrapedSong(
   sourceUrl: string,
-  source: 'letras_mus_br' | 'genius',
+  source: 'letras_mus_br' | 'genius' | 'vagalume',
   timeoutMs: number,
 ): Promise<GospelSong | null> {
-  const allowedHosts = source === 'genius' ? ['genius.com'] : ['letras.mus.br', 'letras.com'];
+  const allowedHosts = source === 'genius' ? ['genius.com'] : source === 'vagalume' ? ['vagalume.com.br'] : ['letras.mus.br', 'letras.com'];
   if (!isAllowedLyricsUrl(sourceUrl, allowedHosts)) throw new Error('URL de letra não autorizada');
 
   const html = await fetchText(sourceUrl, timeoutMs, {}, allowedHosts);
@@ -444,7 +680,7 @@ export async function fetchScrapedSong(
   const { title, artist } = inferTitleArtist(html, sourceUrl);
   const album = metaContent(html, 'music:album') || undefined;
   return {
-    id: stableId(source === 'genius' ? 'genius' : 'letras', sourceUrl),
+    id: stableId(source === 'genius' ? 'genius' : source === 'vagalume' ? 'vagalume' : 'letras', sourceUrl),
     title,
     artist,
     album,

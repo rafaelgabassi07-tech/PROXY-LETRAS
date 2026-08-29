@@ -19,7 +19,7 @@ function envBoolean(name: string, fallback: boolean): boolean {
 }
 
 export const defaultProxyConfig: ProxyConfig = {
-  version: '2.4.0',
+  version: '2.5.0',
   serverName: 'Gospel-Lyrics-Proxy-Engine',
   port: Number(process.env.PORT || 3000),
   enableCors: true,
@@ -52,14 +52,18 @@ export const defaultProxyConfig: ProxyConfig = {
 
   providers: {
     vagalume: {
-      enabled: Boolean(process.env.VAGALUME_API_KEY),
+      // O site web funciona sem credencial; a API oficial é usada quando há chave.
+      enabled: true,
       baseUrl: 'https://api.vagalume.com.br',
+      webBaseUrl: 'https://www.vagalume.com.br',
       apiKey: process.env.VAGALUME_API_KEY || '',
       timeoutMs: 4500,
     },
     genius: {
-      enabled: Boolean(process.env.GENIUS_ACCESS_TOKEN),
+      // A API melhora a busca quando configurada; scraping web permanece como fallback.
+      enabled: true,
       baseUrl: 'https://api.genius.com',
+      webBaseUrl: 'https://genius.com',
       accessToken: process.env.GENIUS_ACCESS_TOKEN || '',
       timeoutMs: 4500,
     },
@@ -74,7 +78,7 @@ export const defaultProxyConfig: ProxyConfig = {
       authHeader: process.env.CUSTOM_GOSPEL_API_AUTH || '',
       customHeaders: {
         Accept: 'application/json',
-        'User-Agent': 'GospelLyricsProxy/2.4',
+        'User-Agent': 'GospelLyricsProxy/2.5',
       },
       method: 'POST',
       responsePath: 'data.lyrics',
@@ -216,6 +220,7 @@ export function getSafeProxyConfig(): ProxyPublicConfig {
       vagalume: {
         enabled: config.providers.vagalume.enabled,
         baseUrl: config.providers.vagalume.baseUrl,
+        webBaseUrl: config.providers.vagalume.webBaseUrl,
         timeoutMs: config.providers.vagalume.timeoutMs,
         configured: Boolean(config.providers.vagalume.apiKey),
         apiKey: config.providers.vagalume.apiKey ? SECRET_PLACEHOLDER : '',
@@ -223,6 +228,7 @@ export function getSafeProxyConfig(): ProxyPublicConfig {
       genius: {
         enabled: config.providers.genius.enabled,
         baseUrl: config.providers.genius.baseUrl,
+        webBaseUrl: config.providers.genius.webBaseUrl,
         timeoutMs: config.providers.genius.timeoutMs,
         configured: Boolean(config.providers.genius.accessToken),
         accessToken: config.providers.genius.accessToken ? SECRET_PLACEHOLDER : '',

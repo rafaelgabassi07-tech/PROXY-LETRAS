@@ -1,28 +1,22 @@
 {
   "name": "gospel-lyrics-proxy",
   "private": true,
-  "version": "2.4.1",
+  "version": "2.5.0",
   "type": "module",
   "scripts": {
-    "dev": "vite --port=3000 --host=0.0.0.0",
-    "build": "vite build",
-    "preview": "vite preview",
+    "dev": "tsx watch server.ts",
     "start": "tsx server.ts",
     "clean": "rm -rf dist server.js",
-    "lint": "tsc --noEmit",
+    "lint": "tsc -p tsconfig.server.json",
     "test:proxy": "tsx server/proxySelfTest.ts",
-    "test:vercel-config": "node scripts/verify-vercel-config.mjs"
+    "test:deploy": "node scripts/verify-vercel-config.mjs",
+    "web:dev": "npm --prefix web run dev",
+    "web:build": "npm --prefix web run build"
   },
   "dependencies": {
-    "@tailwindcss/vite": "^4.1.14",
-    "@vitejs/plugin-react": "^5.0.4",
-    "lucide-react": "^0.546.0",
-    "react": "^19.0.1",
-    "react-dom": "^19.0.1",
-    "vite": "^6.2.3",
-    "express": "^5.2.1",
-    "dotenv": "^17.2.3",
     "cheerio": "^1.2.0",
+    "dotenv": "^17.2.3",
+    "express": "^5.2.1",
     "express-rate-limit": "^8.7.0",
     "helmet": "^8.3.0",
     "lru-cache": "^11.5.2",
@@ -30,14 +24,10 @@
     "zod": "^4.4.3"
   },
   "devDependencies": {
+    "@types/express": "^5.0.6",
     "@types/node": "^24.0.0",
-    "autoprefixer": "^10.4.21",
-    "esbuild": "^0.25.0",
-    "tailwindcss": "^4.1.14",
     "tsx": "^4.23.12",
-    "typescript": "~5.8.2",
-    "vite": "^6.2.3",
-    "@types/express": "^5.0.6"
+    "typescript": "~5.8.2"
   },
   "engines": {
     "node": "24.x"

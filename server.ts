@@ -33,7 +33,7 @@ const apiLimiter = rateLimit({
   message: { success: false, code: 'RATE_LIMITED', error: 'Muitas requisições. Tente novamente em instantes.' },
 });
 
-app.use('/api', apiLimiter, async (req, res) => {
+app.use('/api', apiLimiter, async (req: express.Request, res: express.Response) => {
   const headers: Record<string, string> = {};
   for (const [key, value] of Object.entries(req.headers)) {
     if (typeof value === 'string') headers[key] = value;
@@ -53,13 +53,13 @@ app.use('/api', apiLimiter, async (req, res) => {
 const distPath = path.resolve(__dirname, 'dist');
 const indexPath = path.join(distPath, 'index.html');
 app.use(express.static(distPath, { maxAge: '1h', etag: true, fallthrough: true }));
-app.use((_req, res) => {
+app.use((_req: express.Request, res: express.Response) => {
   if (fs.existsSync(indexPath)) return res.sendFile(indexPath);
   return res.status(200).json({
     status: 'online',
     service: getProxyConfig().serverName,
     version: getProxyConfig().version,
-    message: 'API ativa. Execute npm run build para disponibilizar o painel web.',
+    message: 'API ativa. O painel web é opcional e isolado em /web; use npm run web:build para gerar /dist.',
   });
 });
 
