@@ -1,17 +1,11 @@
 {
   "name": "gospel-lyrics-proxy",
   "private": true,
-  "version": "2.6.0",
+  "version": "2.7.0",
   "type": "module",
   "scripts": {
-    "dev": "tsx watch local-server.ts",
-    "start": "tsx local-server.ts",
-    "clean": "rm -rf dist server.js",
-    "lint": "tsc -p tsconfig.server.json",
-    "test:proxy": "tsx server/proxySelfTest.ts",
-    "test:deploy": "node scripts/verify-vercel-config.mjs",
-    "web:dev": "npm --prefix web run dev",
-    "web:build": "npm --prefix web run build"
+    "start": "node local-server.js",
+    "test:deploy": "node scripts/verify-vercel-runtime.mjs"
   },
   "dependencies": {
     "cheerio": "^1.2.0",
@@ -19,11 +13,6 @@
     "lru-cache": "^11.5.2",
     "pino": "^10.3.1",
     "zod": "^4.4.3"
-  },
-  "devDependencies": {
-    "@types/node": "^24.0.0",
-    "tsx": "^4.23.12",
-    "typescript": "~5.8.2"
   },
   "engines": {
     "node": "24.x"
