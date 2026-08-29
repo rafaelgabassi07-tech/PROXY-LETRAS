@@ -1,0 +1,7 @@
+{
+  "name": "Gospel Lyrics Proxy Hub",
+  "description": "Servidor proxy configurável para busca e extração de letras de músicas gospel, pronto para personalização via ChatGPT e integração de APIs.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
+
