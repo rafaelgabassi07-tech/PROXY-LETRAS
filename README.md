@@ -1,4 +1,4 @@
-# Gospel Lyrics Proxy v2.5
+# Gospel Lyrics Proxy v2.6
 
 ## GLX Extraction Engine 3.1
 
@@ -47,7 +47,7 @@ npm install
 npm run dev
 ```
 
-O modo `npm run dev` abre somente o backend Express em `http://localhost:3000`. O painel Vite foi isolado em `web/` e usa `npm run web:dev`. O APK de produção usa por padrão `https://proxy-letras.vercel.app`; `10.0.2.2:3000` permanece apenas como override local de desenvolvimento.
+O modo `npm run dev` abre o adaptador HTTP local em `http://localhost:3000` usando `node:http`. O painel Vite foi isolado em `web/` e usa `npm run web:dev`. O APK de produção usa por padrão `https://proxy-letras.vercel.app`; `10.0.2.2:3000` permanece apenas como override local de desenvolvimento.
 
 Para executar o servidor de produção:
 
@@ -71,12 +71,12 @@ Copie `.env.example` para `.env` ou `.env.local` e preencha somente as credencia
 A URL do Proxy pode ser alterada no próprio cabeçalho da aba **Letras** no APK, sem recompilar o aplicativo.
 ## Produção no Vercel
 
-Endpoint oficial usado pelo APK: `https://proxy-letras.vercel.app`. O `server.ts` exporta o Express como `default`, permitindo detecção nativa do backend pelo Vercel/Fluid Compute, e só abre uma porta quando executado fora do Vercel. O runtime declarado é Node 24.x. **Não existe `vercel.json`**: a implantação usa a detecção zero-config do Express e o `package.json` raiz não contém Vite/React nem script genérico `build`.
+Endpoint oficial usado pelo APK: `https://proxy-letras.vercel.app`. Produção usa Vercel Functions nativas em `api/`; não existe `server.ts` na raiz e, portanto, não há auto-detecção Express no deployment. O `vercel.json` define apenas `framework: null` (preset Other). O runtime declarado é Node 24.x. O painel continua isolado em `web/`.
 
 Validação pós-deploy recomendada: `GET /api/health` deve responder `status: online` e informar a versão/recursos do GLX.
 
 
-## Fontes do motor 2.5
+## Fontes do motor 2.6
 
 O modo `multi-provider` usa os provedores em paralelo e deduplica os resultados:
 
@@ -90,4 +90,4 @@ O `/api/health` expõe `activeProviders` e `providerModes` sem revelar chaves.
 
 ## Vercel
 
-O backend Express é zero-config: `server.ts` e `package.json` ficam na raiz; o dashboard está isolado em `web/`. Não adicione `functions.server.ts`, rewrites para `/api` nem um script genérico `build` ao package raiz. Execute `npm run test:deploy` antes de publicar.
+O backend de produção é roteado por arquivos TypeScript dentro de `api/`. Não adicione `functions.server.ts` nem restaure `server.ts` na raiz. O dashboard está isolado em `web/`. Execute `npm run test:deploy` antes de publicar.

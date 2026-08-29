@@ -1,4 +1,5 @@
 import type { ProxyConfig, ProxyPublicConfig } from './types.ts';
+import { PROXY_SERVER_NAME, PROXY_VERSION } from './meta.ts';
 
 export const OFFICIAL_PROXY_BASE_URL = 'https://proxy-letras.vercel.app';
 
@@ -19,8 +20,8 @@ function envBoolean(name: string, fallback: boolean): boolean {
 }
 
 export const defaultProxyConfig: ProxyConfig = {
-  version: '2.5.0',
-  serverName: 'Gospel-Lyrics-Proxy-Engine',
+  version: PROXY_VERSION,
+  serverName: PROXY_SERVER_NAME,
   port: Number(process.env.PORT || 3000),
   enableCors: true,
   allowedOrigins: (process.env.ALLOWED_ORIGINS || (process.env.VERCEL ? OFFICIAL_PROXY_BASE_URL : '*'))
@@ -78,7 +79,7 @@ export const defaultProxyConfig: ProxyConfig = {
       authHeader: process.env.CUSTOM_GOSPEL_API_AUTH || '',
       customHeaders: {
         Accept: 'application/json',
-        'User-Agent': 'GospelLyricsProxy/2.5',
+        'User-Agent': `GospelLyricsProxy/${PROXY_VERSION}`, 
       },
       method: 'POST',
       responsePath: 'data.lyrics',

@@ -4,6 +4,6 @@
     "types": ["node"],
     "noEmit": true
   },
-  "include": ["server.ts", "server/**/*.ts"],
+  "include": ["local-server.ts", "api/**/*.ts", "server/**/*.ts"],
   "exclude": ["web", "dist", "node_modules"]
 }

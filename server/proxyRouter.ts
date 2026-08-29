@@ -190,7 +190,7 @@ const SAFE_RAW_HEADERS = new Set([
 
 function sanitizeRawHeaders(headers: Record<string, string> | undefined): Record<string, string> {
   const sanitized: Record<string, string> = {
-    'User-Agent': 'GospelLyricsProxy/2.4',
+    'User-Agent': 'GospelLyricsProxy/2.6',
     Accept: '*/*',
   };
   for (const [key, value] of Object.entries(headers || {})) {

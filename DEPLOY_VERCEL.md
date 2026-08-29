@@ -1,43 +1,38 @@
-# Deploy no Vercel — Gospel Lyrics Proxy 2.5.0
+# Deploy no Vercel — Proxy 2.6
 
-## Backend Express zero-config
+## Estrutura de produção
 
-A raiz do projeto de deploy contém apenas o backend detectável pelo Vercel:
+Publique o conteúdo deste ZIP diretamente na raiz do projeto Vercel:
 
-- `server.ts` — importa Express e `export default app`
-- `package.json` — dependências de produção exclusivamente do backend
-- `server/`
-- `scripts/verify-vercel-config.mjs`
-
-**Não existe `vercel.json` e não existe script genérico `build`.** Isso é intencional: o Vercel atual detecta o Express pelo entrypoint e pelas dependências. Um `functions.server.ts` ou rewrites para `/api` não devem ser adicionados.
-
-O dashboard Vite/React foi isolado em `web/` e não participa da detecção/build do backend. Para usá-lo localmente:
-
-```bash
-npm install
-npm --prefix web install
-npm run web:dev
+```text
+/
+├── api/
+│   ├── health.ts
+│   └── proxy/
+│       ├── health.ts
+│       ├── lyrics/search.ts
+│       ├── lyrics/get.ts
+│       └── ...
+├── server/
+├── index.html
+├── package.json
+└── vercel.json
 ```
 
-Para gerar o painel estático opcional em `dist/`:
+`vercel.json` contém somente `framework: null`, selecionando **Other**. As Functions são descobertas automaticamente porque ficam dentro de `/api`, conforme o runtime Node oficial do Vercel. Não existe `server.ts` na raiz e não existe mapeamento manual `functions.server.ts`.
 
-```bash
-npm run web:build
-```
+## Teste obrigatório após publicar
 
-## Validação obrigatória antes do deploy
+1. `https://proxy-letras.vercel.app/` deve abrir a página estática de status.
+2. `https://proxy-letras.vercel.app/api/health` deve retornar JSON HTTP 200.
+3. O JSON deve conter `status: "online"`.
+4. `apiReady: true` confirma que o módulo de letras/GLX inicializou. Se `apiReady` for `false`, consulte `runtime.diagnostic`; o health continua vivo justamente para mostrar o erro de inicialização.
 
-```bash
-npm run test:deploy
-npm run lint
-npm run test:proxy
-```
+## Variáveis opcionais
 
-Depois do deploy no domínio oficial, valide na ordem:
+- `GENIUS_ACCESS_TOKEN` — melhora o caminho Genius.
+- `VAGALUME_API_KEY` — melhora o caminho Vagalume.
+- `PROXY_ADMIN_TOKEN` — protege rotas administrativas.
+- `CUSTOM_GOSPEL_API_URL` / `CUSTOM_GOSPEL_API_AUTH` — provedor customizado.
 
-1. `GET /api/health`
-2. `GET /api/proxy/health` (alias de compatibilidade)
-3. `POST /api/proxy/lyrics/search`
-4. `POST /api/proxy/lyrics/get`
-
-O APK usa por padrão `https://proxy-letras.vercel.app` e tenta os dois endpoints de health antes de classificar a API como indisponível.
+Letras.mus.br, Vagalume web e Genius web permanecem com fallbacks sem chave conforme o motor 2.6.
