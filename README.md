@@ -70,6 +70,6 @@ Copie `.env.example` para `.env` ou `.env.local` e preencha somente as credencia
 A URL do Proxy pode ser alterada no próprio cabeçalho da aba **Letras** no APK, sem recompilar o aplicativo.
 ## Produção no Vercel
 
-Endpoint oficial usado pelo APK: `https://proxy-letras.vercel.app`. O `server.ts` exporta o Express como `default`, permitindo detecção nativa do backend pelo Vercel/Fluid Compute, e só abre uma porta quando executado fora do Vercel. O runtime declarado é Node 24.x.
+Endpoint oficial usado pelo APK: `https://proxy-letras.vercel.app`. O `server.ts` exporta o Express como `default`, permitindo detecção nativa do backend pelo Vercel/Fluid Compute, e só abre uma porta quando executado fora do Vercel. O runtime declarado é Node 24.x. O `vercel.json` força apenas o preset `express`; ele **não** declara `server.ts` em `functions`, porque a detecção zero-config do Express cria a função única automaticamente.
 
 Validação pós-deploy recomendada: `GET /api/health` deve responder `status: online` e informar a versão/recursos do GLX.
