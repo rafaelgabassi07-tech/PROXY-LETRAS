@@ -1,0 +1,7 @@
+# Production artifact is JavaScript-only. Never upload TypeScript runtime files.
+source/
+**/*.ts
+**/*.tsx
+**/*.mts
+**/*.cts
+tsconfig*.json

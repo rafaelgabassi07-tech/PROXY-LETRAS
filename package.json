@@ -1,7 +1,7 @@
 {
   "name": "gospel-lyrics-proxy",
   "private": true,
-  "version": "2.7.0",
+  "version": "2.7.1",
   "type": "module",
   "scripts": {
     "start": "node local-server.js",

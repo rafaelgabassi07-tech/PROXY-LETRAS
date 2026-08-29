@@ -37,8 +37,8 @@ Publique o conteúdo deste ZIP diretamente na raiz do projeto Vercel:
 
 Letras.mus.br, Vagalume web e Genius web permanecem com fallbacks sem chave conforme o motor 2.6.
 
-## v2.7 — runtime JavaScript explícito
+## v2.7.1 — runtime JavaScript explícito
 
-O artefato de produção v2.7 não depende da transpilação TypeScript do Vercel para os módulos compartilhados. `api/` e `server/` contêm somente `.js` ESM. O código TypeScript de referência está em `source/` e não participa das rotas de Functions.
+O artefato de produção v2.7.1 não depende da transpilação TypeScript do Vercel para os módulos compartilhados. `api/` e `server/` contêm somente `.js` ESM. O código TypeScript de referência está em `source/` e não participa das rotas de Functions.
 
 Isso corrige o erro `ERR_MODULE_NOT_FOUND ... /server/healthHandler.ts` / `proxyRouter.ts` observado no v2.6: nenhum import de runtime aponta para `.ts`.
