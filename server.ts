@@ -71,13 +71,19 @@ app.use((error: any, _req: express.Request, res: express.Response, _next: expres
   return res.status(400).json({ success: false, code: 'BAD_REQUEST', error: 'Requisição inválida.' });
 });
 
-const server = app.listen(PORT, '0.0.0.0', () => {
-  logger.info({ version: getProxyConfig().version, port: PORT }, 'proxy_started');
-});
-
-for (const signal of ['SIGINT', 'SIGTERM'] as const) {
-  process.on(signal, () => {
-    logger.info({ signal }, 'proxy_stopping');
-    server.close(() => process.exit(0));
+// Vercel detecta e executa o Express exportado como uma única Function/Fluid Compute.
+// Fora do Vercel preservamos o listener tradicional para `npm start` e desenvolvimento local.
+if (!process.env.VERCEL) {
+  const server = app.listen(PORT, '0.0.0.0', () => {
+    logger.info({ version: getProxyConfig().version, port: PORT }, 'proxy_started');
   });
+
+  for (const signal of ['SIGINT', 'SIGTERM'] as const) {
+    process.on(signal, () => {
+      logger.info({ signal }, 'proxy_stopping');
+      server.close(() => process.exit(0));
+    });
+  }
 }
+
+export default app;

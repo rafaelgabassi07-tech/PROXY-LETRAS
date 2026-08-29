@@ -7,7 +7,7 @@ import {
 } from './extractionEngine.ts';
 import type { GospelSong, SearchResult } from './types.ts';
 
-const PROXY_API_USER_AGENT = `GospelLyricsProxy/2.3 GLX/${EXTRACTION_ENGINE_VERSION}`;
+const PROXY_API_USER_AGENT = `GospelLyricsProxy/2.4 GLX/${EXTRACTION_ENGINE_VERSION}`;
 
 const BROWSER_HEADERS: Record<string, string> = {
   Accept: 'text/html,application/xhtml+xml,application/json;q=0.9,*/*;q=0.8',
@@ -17,7 +17,7 @@ const BROWSER_HEADERS: Record<string, string> = {
   'Sec-Fetch-Mode': 'navigate',
   'Upgrade-Insecure-Requests': '1',
   'User-Agent':
-    'Mozilla/5.0 (Linux; Android 16) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/151 Mobile Safari/537.36 GospelLyricsProxy/2.3',
+    'Mozilla/5.0 (Linux; Android 16) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/151 Mobile Safari/537.36 GospelLyricsProxy/2.4',
 };
 
 const NAV_PATHS = new Set([

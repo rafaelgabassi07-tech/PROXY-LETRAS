@@ -1,7 +1,7 @@
 {
   "name": "gospel-lyrics-proxy",
   "private": true,
-  "version": "2.3.0",
+  "version": "2.4.0",
   "type": "module",
   "scripts": {
     "dev": "vite --port=3000 --host=0.0.0.0",
@@ -39,6 +39,6 @@
     "@types/express": "^5.0.6"
   },
   "engines": {
-    "node": ">=24 <26"
+    "node": "24.x"
   }
 }

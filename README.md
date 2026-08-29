@@ -1,4 +1,4 @@
-# Gospel Lyrics Proxy v2.3
+# Gospel Lyrics Proxy v2.4
 
 ## GLX Extraction Engine 3.1
 
@@ -68,3 +68,8 @@ Copie `.env.example` para `.env` ou `.env.local` e preencha somente as credencia
 - `POST /api/proxy/lyrics/raw` — desativado por padrão; quando habilitado exige administração + allowlist e validação SSRF.
 
 A URL do Proxy pode ser alterada no próprio cabeçalho da aba **Letras** no APK, sem recompilar o aplicativo.
+## Produção no Vercel
+
+Endpoint oficial usado pelo APK: `https://proxy-letras.vercel.app`. O `server.ts` exporta o Express como `default`, permitindo detecção nativa do backend pelo Vercel/Fluid Compute, e só abre uma porta quando executado fora do Vercel. O runtime declarado é Node 24.x.
+
+Validação pós-deploy recomendada: `GET /api/health` deve responder `status: online` e informar a versão/recursos do GLX.

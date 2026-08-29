@@ -1,5 +1,7 @@
 import type { ProxyConfig, ProxyPublicConfig } from './types.ts';
 
+export const OFFICIAL_PROXY_BASE_URL = 'https://proxy-letras.vercel.app';
+
 const SECRET_PLACEHOLDER = '••••••••';
 const SENSITIVE_HEADER = /^(authorization|proxy-authorization|cookie|set-cookie|x-api-key|api-key)$/i;
 
@@ -17,11 +19,11 @@ function envBoolean(name: string, fallback: boolean): boolean {
 }
 
 export const defaultProxyConfig: ProxyConfig = {
-  version: '2.3.0',
+  version: '2.4.0',
   serverName: 'Gospel-Lyrics-Proxy-Engine',
   port: Number(process.env.PORT || 3000),
   enableCors: true,
-  allowedOrigins: (process.env.ALLOWED_ORIGINS || '*')
+  allowedOrigins: (process.env.ALLOWED_ORIGINS || (process.env.VERCEL ? OFFICIAL_PROXY_BASE_URL : '*'))
     .split(',')
     .map(value => value.trim())
     .filter(Boolean),
@@ -72,7 +74,7 @@ export const defaultProxyConfig: ProxyConfig = {
       authHeader: process.env.CUSTOM_GOSPEL_API_AUTH || '',
       customHeaders: {
         Accept: 'application/json',
-        'User-Agent': 'GospelLyricsProxy/2.3',
+        'User-Agent': 'GospelLyricsProxy/2.4',
       },
       method: 'POST',
       responsePath: 'data.lyrics',

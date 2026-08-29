@@ -8,7 +8,7 @@ import { lookup } from 'node:dns/promises';
 import { isIP } from 'node:net';
 import { GOSPEL_DATABASE } from './gospelDatabase.ts';
 import { clearCache, getCacheStats, getGospelSongLyrics, resetProviderHealth, searchGospelSongs } from './lyricsService.ts';
-import { getAdminToken, getProxyConfig, getSafeProxyConfig, resetProxyConfig, updateProxyConfig } from './proxyConfig.ts';
+import { OFFICIAL_PROXY_BASE_URL, getAdminToken, getProxyConfig, getSafeProxyConfig, resetProxyConfig, updateProxyConfig } from './proxyConfig.ts';
 import { LyricsRequestSchema, ProxyConfigUpdateSchema, RawProxyRequestSchema, SearchQuerySchema, zodIssueMessage } from './schemas.ts';
 import { logger } from './logger.ts';
 import { EXTRACTION_ENGINE_NAME, EXTRACTION_ENGINE_VERSION, extractionEngineCapabilities } from './extractionEngine.ts';
@@ -190,7 +190,7 @@ const SAFE_RAW_HEADERS = new Set([
 
 function sanitizeRawHeaders(headers: Record<string, string> | undefined): Record<string, string> {
   const sanitized: Record<string, string> = {
-    'User-Agent': 'GospelLyricsProxy/2.3',
+    'User-Agent': 'GospelLyricsProxy/2.4',
     Accept: '*/*',
   };
   for (const [key, value] of Object.entries(headers || {})) {
@@ -310,6 +310,8 @@ export async function handleApiRequest(
           status: 'online',
           service: config.serverName,
           version: config.version,
+          deployment: process.env.VERCEL ? 'vercel' : 'local',
+          publicBaseUrl: process.env.PUBLIC_PROXY_URL?.trim() || (process.env.VERCEL ? OFFICIAL_PROXY_BASE_URL : undefined),
           uptimeSeconds: Math.floor(process.uptime?.() || 0),
           cache: getCacheStats(),
           defaultProvider: config.defaultProvider,
