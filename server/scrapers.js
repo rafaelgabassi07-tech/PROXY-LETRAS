@@ -714,46 +714,68 @@ export async function fetchVagalumeTrackMetadata(webBaseUrl, apiBaseUrl, apiKey,
     let artistImage;
     let artistId;
 
-    // 1) JSON compacto da discografia quando disponível.
-    try {
-        const discBudget = budget.next(1600);
-        if (discBudget) {
-            const raw = await fetchText(`${webBase}/${slug}/discografia/index.js`, discBudget, { Accept: 'application/json,text/plain,*/*' }, [webHost]);
-            const parsed = JSON.parse(raw);
-            for (const [title, metadata] of extractDiscographyMatches(parsed, cleanTitles, webBase)) output.set(title, metadata);
+    // Capa exata e imagem do artista são independentes. Executá-las em paralelo evita o
+    // comportamento regressivo em que um index.js de discografia lento consumia todo o budget
+    // e impedia até o fallback visual do perfil.
+    const initialRequests = [];
+    const discBudget = budget.next(1600);
+    if (discBudget) {
+        initialRequests.push((async () => {
+            try {
+                const raw = await fetchText(`${webBase}/${slug}/discografia/index.js`, discBudget, { Accept: 'application/json,text/plain,*/*' }, [webHost]);
+                const parsed = JSON.parse(raw);
+                return { kind: 'discography', value: extractDiscographyMatches(parsed, cleanTitles, webBase) };
+            }
+            catch {
+                return { kind: 'discography', value: new Map() };
+            }
+        })());
+    }
+    const profileBudget = budget.next(1500);
+    if (profileBudget) {
+        initialRequests.push((async () => {
+            try {
+                const raw = await fetchText(`${webBase}/${slug}/index.js`, profileBudget, { Accept: 'application/json,text/plain,*/*' }, [webHost]);
+                const parsed = JSON.parse(raw);
+                return { kind: 'profile', value: artistProfileMetadata(parsed, webBase) };
+            }
+            catch {
+                return { kind: 'profile', value: {} };
+            }
+        })());
+    }
+    if (initialRequests.length) {
+        const initial = await Promise.all(initialRequests);
+        for (const item of initial) {
+            if (item.kind === 'discography') {
+                for (const [title, metadata] of item.value) output.set(title, metadata);
+            }
+            else if (item.kind === 'profile') {
+                artistImage = item.value.imageUrl;
+                artistId = item.value.id;
+            }
         }
     }
-    catch { /* a página pública abaixo é o fallback estável */ }
 
-    // 2) Página pública de álbuns: é o contrato humano atual do Vagalume e contém
-    // capas, nomes de álbuns e links reais das faixas. Não depende do index.js legado.
+    // A página HTML continua sendo fallback para capa/álbum quando o índice compacto mudou ou
+    // desapareceu. Só é consultada se houver budget restante, portanto o modo interativo não
+    // volta a segurar a resposta por vários segundos.
     if (output.size < cleanTitles.length) {
         try {
-            const htmlBudget = budget.next(1900);
+            const htmlBudget = budget.next(1700);
             if (htmlBudget) {
                 const html = await fetchText(`${webBase}/${slug}/discografia/`, htmlBudget, {}, [webHost]);
-                const htmlMatches = extractDiscographyHtmlMatches(html, slug, cleanTitles.filter(title => !output.has(title)), webBase);
+                const missing = cleanTitles.filter(title => !output.has(title));
+                const htmlMatches = extractDiscographyHtmlMatches(html, slug, missing, webBase);
                 for (const [title, metadata] of htmlMatches) output.set(title, metadata);
             }
         }
-        catch { /* perfil do artista abaixo ainda fornece fallback visual */ }
+        catch { /* perfil do artista já fornece fallback visual */ }
     }
-
-    try {
-        const profileBudget = budget.next(1500);
-        if (profileBudget) {
-            const raw = await fetchText(`${webBase}/${slug}/index.js`, profileBudget, { Accept: 'application/json,text/plain,*/*' }, [webHost]);
-            const parsed = JSON.parse(raw);
-            const profile = artistProfileMetadata(parsed, webBase);
-            artistImage = profile.imageUrl;
-            artistId = profile.id;
-        }
-    }
-    catch { /* image.php abaixo é opcional */ }
 
     if (!artistImage && artistId && String(apiKey || '').trim()) {
         try {
-            const imageBudget = budget.next(1300);
+            const imageBudget = budget.next(1200);
             if (imageBudget) {
                 const url = new URL('/image.php', apiBase);
                 url.searchParams.set('bandID', artistId);
@@ -763,7 +785,7 @@ export async function fetchVagalumeTrackMetadata(webBaseUrl, apiBaseUrl, apiKey,
                 artistImage = imageApiMetadata(JSON.parse(raw), apiBase).imageUrl;
             }
         }
-        catch { /* mantém placeholder local se a galeria estiver indisponível */ }
+        catch { /* sem imagem é aceitável; a letra nunca falha por mídia */ }
     }
 
     for (const title of cleanTitles) {

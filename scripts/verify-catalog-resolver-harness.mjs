@@ -54,12 +54,17 @@ const searchLrclib=async (_base,q,artist,title)=>{
   if(scenario.name==='lrclib-fail') throw new Error('LRCLIB HTTP 503');
   if(scenario.name==='fallback-vagalume') return [];
   if(scenario.name==='artist') return [{id:'lrclib-2',title:'Ressuscita-me',artist:'Aline Barros',preview:'Mestre eu preciso de um milagre',source:'lrclib',sourceUrl:'https://lrclib.net/api/get/2',providerRef:'2',score:120}];
+  if(scenario.name==='sparse-primary') return [{id:'lrclib-3',title:'Graça',artist:'Artista A',preview:'Letra disponível',source:'lrclib',sourceUrl:'https://lrclib.net/api/get/3',providerRef:'3',score:130}];
   return [{id:'lrclib-1',title:q,artist:'Artista Resolvido',preview:'Letra disponível',source:'lrclib',sourceUrl:'https://lrclib.net/api/get/1',providerRef:'1',score:130}];
 };
 const searchVagalumeExcerpt=async (_api,_web,_key,q)=>{
   calls.push(['vagalume-excerpt',q]);
   if(scenario.name==='fallback-vagalume') return [{id:'v1',title:'Canção ausente',artist:'Cantor Gospel',preview:'Resultado encontrado no Vagalume.',source:'vagalume',providerRef:'v1',score:110}];
   if(scenario.name==='excerpt') return [{id:'v2',title:'Canção por trecho',artist:'Cantor Gospel',preview:q,source:'vagalume',providerRef:'v2',score:120}];
+  if(scenario.name==='sparse-primary') return [
+    {id:'v3',title:'Graça Ao Vivo',artist:'Artista A',preview:'Versão ao vivo',source:'vagalume',providerRef:'v3',score:105},
+    {id:'v4',title:'Graça Infinita',artist:'Artista B',preview:'Outra canção relacionada',source:'vagalume',providerRef:'v4',score:95}
+  ];
   return [];
 };
 const searchVagalumeArtistPage=async()=>[];
@@ -97,9 +102,17 @@ try {
   result = await service.searchGospelSongs({ query: 'Ressuscita-me', limit: 12, provider: 'multi-provider' }, { interactive: true });
   assert.equal(result.total, 1);
   assert.equal(result.clientMode, 'interactive');
-  assert.equal(result.mediaDeferred, true);
-  assert.ok(!calls.some(call => call[0] === 'vagalume-media'));
-  console.log('INTERACTIVE_SEARCH_SKIPS_MEDIA_OK');
+  assert.equal(result.mediaDeferred, false);
+  assert.ok(calls.some(call => call[0] === 'vagalume-media'));
+  assert.ok(result.results[0].imageUrl?.startsWith('https://img.vagalume.test/'));
+  console.log('INTERACTIVE_SEARCH_FAST_ARTWORK_OK');
+
+  reset('title');
+  const detail = await service.getGospelSongLyrics({ id: 'lrclib-1', providerRef: '1', artist: 'Aline Barros', title: 'Ressuscita-me', provider: 'lrclib' });
+  assert.ok(detail.song, 'detail song should load');
+  assert.ok(detail.song.imageUrl?.startsWith('https://img.vagalume.test/'), 'detail must recover artwork independently');
+  assert.equal(detail.song.album, 'Álbum Ressuscita-me');
+  console.log('DETAIL_ARTWORK_RECOVERY_OK');
 
   reset('artist');
   result = await service.searchGospelSongs({ query: 'Aline Barros', limit: 12, provider: 'multi-provider' });
@@ -114,6 +127,13 @@ try {
   assert.equal(result.total, 1);
   assert.equal(calls[0]?.[0], 'vagalume-excerpt');
   console.log('EXCERPT_SEARCH_PRIMARY_OK');
+
+  reset('sparse-primary');
+  result = await service.searchGospelSongs({ query: 'Graça', limit: 12, provider: 'multi-provider' }, { interactive: true });
+  assert.ok(calls.some(call => call[0] === 'lrclib'));
+  assert.ok(calls.some(call => call[0] === 'vagalume-excerpt'), 'sparse strong primary must still consult fallback provider');
+  assert.ok(result.total >= 2, 'fallback provider must expand a sparse suggestion list');
+  console.log('SPARSE_PRIMARY_EXPANDS_SUGGESTIONS_OK');
 
   reset('fallback-vagalume');
   result = await service.searchGospelSongs({ query: 'Canção ausente', limit: 12, provider: 'multi-provider' });

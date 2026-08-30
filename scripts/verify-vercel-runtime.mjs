@@ -48,7 +48,7 @@ else if (!String(searchRewrite.destination || '').startsWith('/api/index?__glx_p
 if ('functions' in config) failures.push('No manual functions map');
 
 const pkg = JSON.parse(fs.readFileSync(path.join(root,'package.json'),'utf8'));
-if (pkg.version !== '2.11.5') failures.push(`Expected 2.11.5, got ${pkg.version}`);
+if (pkg.version !== '2.11.6') failures.push(`Expected 2.11.6, got ${pkg.version}`);
 if (pkg.scripts?.build) failures.push('package.json must not run a destructive build script');
 if (!fs.existsSync(path.join(root,'public/index.html'))) failures.push('Missing public/index.html');
 
@@ -62,7 +62,7 @@ const serviceText = fs.readFileSync(path.join(root, 'server/lyricsService.js'), 
 const routerText = fs.readFileSync(path.join(root, 'server/proxyRouter.js'), 'utf8');
 for (const required of [
   'buildRemoteQueries','lyricsMatchQuality','sameSongConfidence','songMatchesRequest','mergeResultMetadata','diceSimilarity',
-  'search-v11-interactive', "['lrclib', 'vagalume']", 'providersUsed','providersCompleted','providersSkipped','providerErrors',
+  'search-v12-artwork-fast', "['lrclib', 'vagalume']", 'providersUsed','providersCompleted','providersSkipped','providerErrors',
   'cacheStatus','bypass-partial','imageUrl','mediaDeferred','clientMode'
 ]) {
   if (!serviceText.includes(required)) failures.push(`Missing search refinement in lyricsService.js: ${required}`);

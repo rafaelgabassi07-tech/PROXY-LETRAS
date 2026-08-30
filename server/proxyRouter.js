@@ -262,6 +262,9 @@ export function recordLog(log) {
         upstreamLatencyMs: newLog.upstreamLatencyMs,
         clientMode: newLog.clientMode,
         mediaDeferred: newLog.mediaDeferred,
+        artworkCount: newLog.artworkCount,
+        hasArtwork: newLog.hasArtwork,
+        imageKind: newLog.imageKind,
         extractionMethod: newLog.extractionMethod,
         error: newLog.error,
     }, 'proxy_request');
@@ -402,6 +405,7 @@ export async function handleApiRequest(url, method, headers, body) {
                 mediaEnrichedCount: result.mediaEnrichedCount || 0,
                 mediaProvider: result.mediaProvider || null,
                 mediaDeferred: Boolean(result.mediaDeferred),
+                artworkCount: result.artworkCount || 0,
                 clientMode: result.clientMode || (interactive ? 'interactive' : 'full'),
                 resultCount: result.total,
             });
@@ -425,6 +429,7 @@ export async function handleApiRequest(url, method, headers, body) {
                         mediaEnrichedCount: result.mediaEnrichedCount || 0,
                         mediaProvider: result.mediaProvider || null,
                         mediaDeferred: Boolean(result.mediaDeferred),
+                        artworkCount: result.artworkCount || 0,
                         clientMode: result.clientMode || (interactive ? 'interactive' : 'full'),
                         cached: false,
                         cacheStatus: result.cacheStatus,
@@ -437,7 +442,7 @@ export async function handleApiRequest(url, method, headers, body) {
             return {
                 status,
                 headers: responseHeaders,
-                body: { success: true, query: queryParams, count: result.total, provider: result.provider, providersUsed: result.providersUsed || [], providersCompleted: result.providersCompleted || [], providersSkipped: result.providersSkipped || [], providerErrors: result.providerErrors || [], mediaEnrichedCount: result.mediaEnrichedCount || 0, mediaProvider: result.mediaProvider || null, mediaDeferred: Boolean(result.mediaDeferred), clientMode: result.clientMode || (interactive ? 'interactive' : 'full'), cached: result.cached, cacheStatus: result.cacheStatus, partial: Boolean(result.partial), latencyMs: latency, data: result.results },
+                body: { success: true, query: queryParams, count: result.total, provider: result.provider, providersUsed: result.providersUsed || [], providersCompleted: result.providersCompleted || [], providersSkipped: result.providersSkipped || [], providerErrors: result.providerErrors || [], mediaEnrichedCount: result.mediaEnrichedCount || 0, mediaProvider: result.mediaProvider || null, mediaDeferred: Boolean(result.mediaDeferred), artworkCount: result.artworkCount || 0, clientMode: result.clientMode || (interactive ? 'interactive' : 'full'), cached: result.cached, cacheStatus: result.cacheStatus, partial: Boolean(result.partial), latencyMs: latency, data: result.results },
             };
         }
         if (pathname === '/api/proxy/lyrics/get' && normalizedMethod === 'POST') {
@@ -459,6 +464,8 @@ export async function handleApiRequest(url, method, headers, body) {
                 requestId,
                 queryParam: truncateLogValue({ id: params.id, artist: params.artist, title: params.title, provider: params.provider }),
                 cached: result.cached,
+                hasArtwork: Boolean(result.song?.imageUrl),
+                imageKind: result.song?.imageKind || null,
                 extractionMethod: result.song?.extractionMethod,
             });
             return result.song

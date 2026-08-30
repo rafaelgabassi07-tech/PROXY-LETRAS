@@ -17,7 +17,7 @@ assert.equal(reusable({ results: [], total: 0, partial: false }), false, 'empty 
 assert.equal(reusable({ results: [{ id: 'ok' }], total: 1, partial: true }), false, 'partial response must never be cached');
 assert.equal(reusable({ results: [{ id: 'ok' }], total: 1, partial: false }), true, 'complete non-empty response should be cacheable');
 
-assert.ok(service.includes("cacheKey('search-v11-interactive'"), 'search cache namespace was not invalidated');
+assert.ok(service.includes("cacheKey('search-v12-artwork-fast'"), 'search cache namespace was not invalidated');
 assert.ok(!service.includes("cacheKey('search-v8-upstream-resilient'") && !service.includes("cacheKey('search-v7-resilient'") && !service.includes("cacheKey('search-v6-dual'"), 'legacy search cache namespace still active');
 assert.ok(service.includes("? (excerptMode ? ['vagalume', 'lrclib'] : ['lrclib', 'vagalume'])"), 'provider routing must use LRCLIB for title/artist and Vagalume for excerpts');
 assert.ok(service.includes("cacheStatus = cacheable ? 'stored' : (partial ? 'bypass-partial' : 'bypass-empty')"), 'cache bypass diagnostics missing');
@@ -29,4 +29,4 @@ assert.ok(router.includes('cacheStatus: newLog.cacheStatus'), 'cacheStatus not e
 assert.ok(router.includes('providersUsed: newLog.providersUsed'), 'providersUsed not emitted in runtime logs');
 assert.ok(router.includes('providerErrors: newLog.providerErrors'), 'providerErrors not emitted in runtime logs');
 
-console.log('CACHE_POISON_REGRESSION_OK: partial/empty responses bypass cache; valid results cache; v11 interactive namespace active; 503 requires zero completed upstreams');
+console.log('CACHE_POISON_REGRESSION_OK: partial/empty responses bypass cache; valid results cache; v12 artwork-fast namespace active; 503 requires zero completed upstreams');
