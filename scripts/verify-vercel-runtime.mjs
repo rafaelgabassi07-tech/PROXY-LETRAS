@@ -46,7 +46,7 @@ if ('rewrites' in config) failures.push('No rewrites: physical compatibility Fun
 if ('functions' in config) failures.push('No manual functions map');
 
 const pkg = JSON.parse(fs.readFileSync(path.join(root,'package.json'),'utf8'));
-if (pkg.version !== '2.11.3') failures.push(`Expected 2.11.3, got ${pkg.version}`);
+if (pkg.version !== '2.11.4') failures.push(`Expected 2.11.4, got ${pkg.version}`);
 if (pkg.scripts?.build) failures.push('package.json must not run a destructive build script');
 if (!fs.existsSync(path.join(root,'public/index.html'))) failures.push('Missing public/index.html');
 
@@ -65,7 +65,7 @@ for (const required of [
 ]) {
   if (!serviceText.includes(required)) failures.push(`Missing search refinement in lyricsService.js: ${required}`);
 }
-for (const required of ['x-lyrics-client-mode', 'interactive', 'mediaDeferred']) {
+for (const required of ['x-lyrics-client-mode', 'interactive', 'mediaDeferred', 'proxy_request_start']) {
   if (!routerText.toLowerCase().includes(required.toLowerCase())) failures.push(`Missing APK interactive contract in proxyRouter.js: ${required}`);
 }
 for (const forbidden of ['searchGenius(', 'searchGeniusWeb(', 'customSearch(', 'customGet(', 'searchLetrasMusBr(', 'letras_mus_br', 'verifyExcerptCandidates(', 'fanOutResolvedSongs(']) {

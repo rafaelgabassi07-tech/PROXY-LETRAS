@@ -260,6 +260,8 @@ export function recordLog(log) {
         providersSkipped: newLog.providersSkipped,
         providerErrors: newLog.providerErrors,
         upstreamLatencyMs: newLog.upstreamLatencyMs,
+        clientMode: newLog.clientMode,
+        mediaDeferred: newLog.mediaDeferred,
         extractionMethod: newLog.extractionMethod,
         error: newLog.error,
     }, 'proxy_request');
@@ -369,6 +371,10 @@ export async function handleApiRequest(url, method, headers, body) {
             }
             const clientMode = headerValue(headers, 'x-lyrics-client-mode').trim().toLowerCase();
             const interactive = clientMode === 'interactive';
+            // Registro de entrada separado do log de conclusão: se a plataforma interromper a
+            // Function por timeout, o Vercel ainda mostrará que /search chegou ao runtime e em
+            // qual modo. Não registra o texto pesquisado para preservar privacidade.
+            logger.info({ requestId, method: normalizedMethod, path: pathname, clientMode: interactive ? 'interactive' : 'full' }, 'proxy_request_start');
             const result = await searchGospelSongs(queryParams, { interactive });
             const latency = Date.now() - startTime;
             // 503 só é correto quando NENHUMA fonte remota conseguiu concluir a consulta.

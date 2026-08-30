@@ -250,6 +250,10 @@ export function recordLog(log: Omit<ProxyTrafficLog, 'id' | 'timestamp'>) {
     status: newLog.status,
     latencyMs: newLog.latencyMs,
     cached: newLog.cached,
+    partial: (newLog as ProxyTrafficLog & { partial?: boolean }).partial,
+    resultCount: (newLog as ProxyTrafficLog & { resultCount?: number }).resultCount,
+    clientMode: (newLog as ProxyTrafficLog & { clientMode?: string }).clientMode,
+    mediaDeferred: (newLog as ProxyTrafficLog & { mediaDeferred?: boolean }).mediaDeferred,
     extractionMethod: newLog.extractionMethod,
     error: newLog.error,
   }, 'proxy_request');
