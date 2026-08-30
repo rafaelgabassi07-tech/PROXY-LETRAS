@@ -553,7 +553,7 @@ async function searchVariants(variants, limit, runner, maxVariants = 3) {
 function remoteQuery(params) {
     return [params.artist, params.title, params.query].filter(Boolean).join(' ').replace(/\s+/g, ' ').trim();
 }
-export async function searchGospelSongs(params) {
+export async function searchGospelSongs(params, options = {}) {
     const startedAt = Date.now();
     const limit = Math.max(1, Math.min(Number(params.limit) || 12, 25));
     const normalizedParams = {
@@ -564,7 +564,9 @@ export async function searchGospelSongs(params) {
         provider: String(params.provider || '').trim(),
         limit,
     };
-    const key = cacheKey('search-v10-artwork-enrichment', normalizedParams);
+    const interactive = options?.interactive === true;
+    const cacheFlavor = interactive ? 'interactive' : 'full';
+    const key = cacheKey('search-v11-interactive', { ...normalizedParams, cacheFlavor });
     const cached = getFromCache(key);
     if (cached && reusableSearchCacheEntry(cached))
         return { ...cached, cached: true, cacheStatus: 'hit' };
@@ -582,7 +584,8 @@ export async function searchGospelSongs(params) {
     const query = remoteQuery(normalizedParams);
     const queryVariants = buildRemoteQueries(normalizedParams);
     const excerptMode = likelyLyricsExcerpt(normalizedParams);
-    const deadline = startedAt + searchBudgetMs();
+    const effectiveSearchBudgetMs = interactive ? Math.min(searchBudgetMs(), 5_200) : searchBudgetMs();
+    const deadline = startedAt + effectiveSearchBudgetMs;
     let partial = false;
     const providersUsed = [];
     const providersCompleted = [];
@@ -727,7 +730,12 @@ export async function searchGospelSongs(params) {
                 partial = true;
                 continue;
             }
-            const budgetMs = remainingBudget(deadline, provider === providerPlan[0] ? 4000 : 3200);
+            const budgetMs = remainingBudget(
+                deadline,
+                interactive
+                    ? (provider === providerPlan[0] ? 3_000 : 1_700)
+                    : (provider === providerPlan[0] ? 4_000 : 3_200)
+            );
             if (!budgetMs) {
                 providersSkipped.push({ provider, reason: 'BUDGET_EXHAUSTED' });
                 partial = true;
@@ -761,7 +769,7 @@ export async function searchGospelSongs(params) {
     // LRCLIB não expõe capa. Quando a busca já encontrou a música, usa o próprio Vagalume
     // (segunda e única outra fonte ativa) somente para completar capa/álbum dos primeiros resultados.
     // A falha de mídia nunca derruba nem marca como parcial uma busca de letras bem-sucedida.
-    if (config.providers.vagalume.enabled && merged.some(item => !item.imageUrl || !item.album)) {
+    if (!interactive && config.providers.vagalume.enabled && merged.some(item => !item.imageUrl || !item.album)) {
         const mediaBudget = remainingBudget(deadline, 2300);
         if (mediaBudget) {
             const groups = new Map();
@@ -817,6 +825,8 @@ export async function searchGospelSongs(params) {
         providerErrors,
         mediaEnrichedCount,
         mediaProvider,
+        mediaDeferred: interactive && merged.some(item => !item.imageUrl || !item.album),
+        clientMode: interactive ? 'interactive' : 'full',
         partial,
         durationMs: Date.now() - startedAt,
     };

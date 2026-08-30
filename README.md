@@ -1,4 +1,4 @@
-# Gospel Lyrics Proxy 2.11.2
+# Gospel Lyrics Proxy 2.11.3
 
 Backend privado da página **Letras** do Harpa & Bíblia, otimizado para Vercel Functions e para uma única caixa de busca capaz de receber título, artista ou trecho da letra.
 
@@ -20,8 +20,14 @@ A biblioteca local do Proxy permanece como fallback determinístico e não conta
 - A listagem não abre páginas completas de letras.
 - A letra completa é carregada somente após o toque em um resultado.
 - Resposta `partial:true` ou `count:0` não entra no cache.
-- Cache de busca atual: `search-v10-artwork-enrichment`.
+- Cache de busca atual: `search-v11-interactive`.
 - `503 UPSTREAM_UNAVAILABLE` só é emitido se nenhum provedor remoto concluir.
+
+## Modo interativo do APK
+
+O APK envia `X-Lyrics-Client-Mode: interactive` nas pesquisas. Nesse modo o Proxy limita o orçamento remoto a aproximadamente 5,2 s e **não bloqueia a resposta aguardando enriquecimento de capa/álbum**. A letra e os metadados visuais completos continuam sendo resolvidos em `/api/proxy/lyrics/get` quando o usuário abre um resultado. Clientes antigos, que não enviam o header, mantêm o modo completo.
+
+As Functions físicas de compatibilidade (`/api/health`, `/api/proxy/lyrics/search`, `/api/proxy/lyrics/get` etc.) são obrigatórias. `scripts/prepare-vercel.mjs` agora é não destrutivo e valida/preserva essas rotas em vez de removê-las.
 
 ## Diagnóstico de logs
 
@@ -74,7 +80,7 @@ npm run test:catalog-routing
 
 ## GLX Extraction Engine 3.1
 
-O GLX continua disponível para fallbacks web do Vagalume e recuperação de páginas, com parse5/htmlparser2, dados estruturados, análise de densidade textual, validação de redirects/hosts, limite de corpo em streaming e diagnóstico de qualidade. Ele não é usado para descobrir título no caminho primário da 2.11.2; essa função agora pertence ao catálogo JSON.
+O GLX continua disponível para fallbacks web do Vagalume e recuperação de páginas, com parse5/htmlparser2, dados estruturados, análise de densidade textual, validação de redirects/hosts, limite de corpo em streaming e diagnóstico de qualidade. Ele não é usado para descobrir título no caminho primário da 2.11.3; essa função agora pertence ao catálogo JSON.
 
 
 ## Metadados visuais

@@ -93,6 +93,14 @@ try {
   assert.ok(result.results[0].imageUrl?.startsWith('https://img.vagalume.test/'));
   console.log('TITLE_SEARCH_PRIMARY_OK');
 
+  reset('title');
+  result = await service.searchGospelSongs({ query: 'Ressuscita-me', limit: 12, provider: 'multi-provider' }, { interactive: true });
+  assert.equal(result.total, 1);
+  assert.equal(result.clientMode, 'interactive');
+  assert.equal(result.mediaDeferred, true);
+  assert.ok(!calls.some(call => call[0] === 'vagalume-media'));
+  console.log('INTERACTIVE_SEARCH_SKIPS_MEDIA_OK');
+
   reset('artist');
   result = await service.searchGospelSongs({ query: 'Aline Barros', limit: 12, provider: 'multi-provider' });
   assert.equal(result.total, 1);

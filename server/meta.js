@@ -1,4 +1,4 @@
-export const PROXY_VERSION = '2.11.2';
+export const PROXY_VERSION = '2.11.3';
 export const PROXY_SERVER_NAME = 'Gospel-Lyrics-Proxy-Engine';
 export const EXTRACTION_ENGINE_NAME = 'GLX Extraction Engine';
 export const EXTRACTION_ENGINE_VERSION = '3.1.0';

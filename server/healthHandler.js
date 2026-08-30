@@ -66,6 +66,7 @@ export async function healthFetch(request) {
             'vercel-native-functions',
             'lightweight-health-probe',
             'adaptive-dual-source-search',
+            'interactive-search-budget',
             'lrclib-title-artist-album-search',
             'vagalume-artwork-enrichment',
             'vagalume-index-and-artist-page-search',

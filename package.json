@@ -1,7 +1,7 @@
 {
   "name": "gospel-lyrics-proxy",
   "private": true,
-  "version": "2.11.2",
+  "version": "2.11.3",
   "type": "module",
   "scripts": {
     "start": "node local-server.js",
@@ -10,7 +10,8 @@
     "test:cache-policy": "node scripts/verify-search-cache-policy.mjs",
     "test:upstream-resilience": "node scripts/verify-upstream-resilience.mjs",
     "test:catalog-routing": "node scripts/verify-catalog-resolver-harness.mjs",
-    "test:artwork": "node scripts/verify-artwork-enrichment.mjs"
+    "test:artwork": "node scripts/verify-artwork-enrichment.mjs",
+    "test:interactive": "node scripts/verify-interactive-search.mjs"
   },
   "dependencies": {
     "cheerio": "^1.2.0",

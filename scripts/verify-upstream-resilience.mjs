@@ -27,7 +27,7 @@ assert.equal(classifier({ total: 0, partial: false, providersCompleted: [] }, 'b
 
 assert.ok(service.includes('providersCompleted.push(provider)'), 'completed-provider accounting missing');
 assert.ok(service.includes('failures < 2 ? 0'), 'provider circuit must not open after a single failure');
-assert.ok(service.includes("cacheKey('search-v10-artwork-enrichment'"), 'v10 artwork cache namespace missing');
+assert.ok(service.includes("cacheKey('search-v11-interactive'"), 'v11 interactive cache namespace missing');
 assert.ok(service.includes('searchLrclib('), 'LRCLIB catalog search missing');
 assert.ok(scrapers.includes('export async function searchLrclib'), 'LRCLIB scraper contract missing');
 assert.ok(scrapers.includes("url.searchParams.set('q', cleanQuery)"), 'LRCLIB generic title/artist query missing');
@@ -38,4 +38,4 @@ assert.ok(scrapers.includes("searchParams.set('apikey'"), 'Vagalume song retriev
 assert.ok(scrapers.includes('export async function searchVagalumeArtistPage'), 'Vagalume artist page search missing');
 assert.ok(router.includes("error: 'As fontes de letras estão temporariamente indisponíveis. Tente novamente.'"), '503 message still masquerades as timeout');
 
-console.log('UPSTREAM_RESILIENCE_OK: 503 requires zero completed providers; LRCLIB catalog resolver + Vagalume excerpt-without-apikey fallback + v10 artwork cache verified');
+console.log('UPSTREAM_RESILIENCE_OK: 503 requires zero completed providers; LRCLIB catalog resolver + Vagalume excerpt-without-apikey fallback + v11 interactive cache verified');

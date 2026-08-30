@@ -45,7 +45,7 @@ function corsHeaders(headers) {
     const result = {
         'Content-Type': 'application/json; charset=utf-8',
         'Access-Control-Allow-Methods': 'GET, POST, PUT, DELETE, OPTIONS',
-        'Access-Control-Allow-Headers': 'Content-Type, Authorization, X-Requested-With, X-Proxy-Admin-Token',
+        'Access-Control-Allow-Headers': 'Content-Type, Authorization, X-Requested-With, X-Proxy-Admin-Token, X-Lyrics-Client-Mode',
         'Cache-Control': 'no-store',
         Vary: 'Origin',
     };
@@ -367,7 +367,9 @@ export async function handleApiRequest(url, method, headers, body) {
                 queryParams.provider = 'built-in';
                 queryParams.limit = Math.min(queryParams.limit, 12);
             }
-            const result = await searchGospelSongs(queryParams);
+            const clientMode = headerValue(headers, 'x-lyrics-client-mode').trim().toLowerCase();
+            const interactive = clientMode === 'interactive';
+            const result = await searchGospelSongs(queryParams, { interactive });
             const latency = Date.now() - startTime;
             // 503 só é correto quando NENHUMA fonte remota conseguiu concluir a consulta.
             // Um provedor pode responder normalmente com zero resultados enquanto o outro falha;
@@ -393,6 +395,8 @@ export async function handleApiRequest(url, method, headers, body) {
                 providerErrors: result.providerErrors,
                 mediaEnrichedCount: result.mediaEnrichedCount || 0,
                 mediaProvider: result.mediaProvider || null,
+                mediaDeferred: Boolean(result.mediaDeferred),
+                clientMode: result.clientMode || (interactive ? 'interactive' : 'full'),
                 resultCount: result.total,
             });
             if (upstreamUnavailable) {
@@ -414,6 +418,8 @@ export async function handleApiRequest(url, method, headers, body) {
                         providerErrors: result.providerErrors || [],
                         mediaEnrichedCount: result.mediaEnrichedCount || 0,
                         mediaProvider: result.mediaProvider || null,
+                        mediaDeferred: Boolean(result.mediaDeferred),
+                        clientMode: result.clientMode || (interactive ? 'interactive' : 'full'),
                         cached: false,
                         cacheStatus: result.cacheStatus,
                         partial: true,
@@ -425,7 +431,7 @@ export async function handleApiRequest(url, method, headers, body) {
             return {
                 status,
                 headers: responseHeaders,
-                body: { success: true, query: queryParams, count: result.total, provider: result.provider, providersUsed: result.providersUsed || [], providersCompleted: result.providersCompleted || [], providersSkipped: result.providersSkipped || [], providerErrors: result.providerErrors || [], mediaEnrichedCount: result.mediaEnrichedCount || 0, mediaProvider: result.mediaProvider || null, cached: result.cached, cacheStatus: result.cacheStatus, partial: Boolean(result.partial), latencyMs: latency, data: result.results },
+                body: { success: true, query: queryParams, count: result.total, provider: result.provider, providersUsed: result.providersUsed || [], providersCompleted: result.providersCompleted || [], providersSkipped: result.providersSkipped || [], providerErrors: result.providerErrors || [], mediaEnrichedCount: result.mediaEnrichedCount || 0, mediaProvider: result.mediaProvider || null, mediaDeferred: Boolean(result.mediaDeferred), clientMode: result.clientMode || (interactive ? 'interactive' : 'full'), cached: result.cached, cacheStatus: result.cacheStatus, partial: Boolean(result.partial), latencyMs: latency, data: result.results },
             };
         }
         if (pathname === '/api/proxy/lyrics/get' && normalizedMethod === 'POST') {
