@@ -1,119 +1,77 @@
-# Gospel Lyrics Proxy 2.10.2
+# Gospel Lyrics Proxy 2.11.1
 
-Produção Vercel consolidada em uma única Function (`api/index.js`) com limpeza automática de rotas legadas no build.
+Backend privado da página **Letras** do Harpa & Bíblia, otimizado para Vercel Functions e para uma única caixa de busca capaz de receber título, artista ou trecho da letra.
+
+## Arquitetura atual
+
+O runtime remoto trabalha deliberadamente com **duas fontes**:
+
+1. **LRCLIB** — catálogo/índice JSON primário para título, artista e álbum. A busca usa `/api/search` e a letra pode ser recuperada por ID em `/api/get/{id}`. Não exige chave, mas o Proxy identifica o cliente por `User-Agent`/`Lrclib-Client`.
+2. **Vagalume** — cobertura complementar, especialmente conteúdo brasileiro/gospel e busca por trecho. Usa `search.excerpt` para descoberta; quando `VAGALUME_API_KEY` está configurada, `search.php` é usado para obter a letra por música/artista ou ID. A página pública do artista/web continua disponível como redundância da própria fonte.
+
+A biblioteca local do Proxy permanece como fallback determinístico e não conta como chamada remota.
+
+**Letras.mus.br não participa mais do caminho de busca.** As URLs de busca tentadas nas versões anteriores retornavam HTTP 404 no deployment real e mascaravam o problema de título isolado como resposta `200 partial:true` vazia.
+
+## Roteamento
+
+- **Título / artista / álbum**: LRCLIB primeiro; Vagalume apenas se o primeiro catálogo não produzir candidato forte.
+- **Trecho claro da letra**: Vagalume primeiro; LRCLIB como fallback.
+- A listagem não abre páginas completas de letras.
+- A letra completa é carregada somente após o toque em um resultado.
+- Resposta `partial:true` ou `count:0` não entra no cache.
+- Cache de busca atual: `search-v9-catalog-resolver`.
+- `503 UPSTREAM_UNAVAILABLE` só é emitido se nenhum provedor remoto concluir.
+
+## Diagnóstico de logs
+
+Uma pesquisa de título bem-sucedida deve normalmente produzir algo semelhante a:
+
+```json
+{
+  "status": 200,
+  "partial": false,
+  "providersUsed": ["lrclib"],
+  "providersCompleted": ["lrclib"],
+  "resultCount": 1,
+  "cacheStatus": "stored"
+}
+```
+
+Se LRCLIB não encontrar candidato e Vagalume recuperar a consulta, `providersUsed` conterá as duas fontes. Se uma fonte falhar e a outra concluir, o resultado pode ser `200 partial:true`; ele não é cacheado.
+
+## Endpoints consumidos pelo APK
+
+- `GET /api/health`
+- `GET /api/proxy/health`
+- `POST /api/proxy/lyrics/search`
+- `POST /api/proxy/lyrics/get`
+- `POST /api/proxy/cache/clear` (administrativo)
+- `GET/POST /api/proxy/config` (administrativo)
+
+O valor HTTP `provider: "multi-provider"` permanece apenas por compatibilidade com o APK; no runtime significa roteamento adaptativo entre LRCLIB e Vagalume, não fan-out indiscriminado.
+
+## Configuração
+
+- Node.js: 24.x na Vercel.
+- `VAGALUME_API_KEY`: recomendada para recuperação de letra pelo endpoint oficial do Vagalume.
+- `LYRICS_SEARCH_BUDGET_MS`: opcional; padrão 7600 ms, limite 3200–9000 ms.
+- `LYRICS_GET_BUDGET_MS`: opcional; padrão 8500 ms, limite 5000–12000 ms.
+- `RAW_PROXY_ENABLED`: `false` por padrão.
+
+## Validação
+
+Sem depender das bibliotecas npm instaladas, os seguintes gates podem ser executados:
+
+```bash
+npm run test:deploy
+npm run test:cache-policy
+npm run test:upstream-resilience
+npm run test:catalog-routing
+```
+
+`npm test` executa o self-test completo e requer `npm install`.
 
 ## GLX Extraction Engine 3.1
 
-O scraping HTML é executado pelo motor próprio **GLX Extraction Engine 3.1**. Cheerio é usado como infraestrutura de DOM, não como algoritmo único: o motor interpreta a mesma página com **parse5** (árvore compatível com HTML5/browser) e **htmlparser2** (parser tolerante), agrega candidatos e decide a letra por consenso e scoring próprio.
-
-Pipeline adaptativo de extração:
-
-1. **estrutura explícita** — seletores semânticos, microdados, JSON-LD e propriedades de letra;
-2. **dupla árvore DOM** — a mesma página é interpretada com parse5 e htmlparser2;
-3. **densidade textual** — conteúdo, quantidade/formato de linhas e link-density;
-4. **análise estrutural tipo Readability** — pontuação de blocos propagada para pai/avô e montagem de irmãos relevantes;
-5. **classificação contextual de blocos tipo boilerplate remover** — blocos fortes/fracos e recuperação de linhas curtas quando cercadas por conteúdo válido;
-6. **estados de frameworks** — `__NEXT_DATA__`, Nuxt, Apollo, estado inicial, React Flight/`__next_f`, scripts JSON e propriedades serializadas, sempre sem executar JavaScript;
-7. **conteúdo alternativo** — `noscript`/`template`;
-8. **recuperação heurística** — regex tolerante a HTML parcialmente quebrado;
-9. **ensemble** — deduplicação exata e por similaridade, consenso entre parser e entre estratégias;
-10. **resgate adaptativo de recall** — extração ampla da árvore original somente quando a cascata de maior precisão não alcança confiança suficiente;
-11. **scoring específico para letras** — refrões repetidos não são tratados como boilerplate; ruído, navegação, densidade de links, formato das linhas e marcadores de verso/refrão entram na nota;
-12. **diagnóstico** — método vencedor, parser, candidatos, score, confiança, sinais e warnings retornam ao APK.
-
-Os princípios de pontuação de ancestrais/irmãos, classificação de boilerplate e cascata precisão→fallback→recall foram adaptados para letras. O GLX não incorpora nem chama Readability, Trafilatura ou jusText em runtime: o algoritmo decisório continua sendo próprio.
-
-O fetch remoto também limita o corpo durante o streaming, valida host em redirecionamentos, restringe quantidade de redirects e usa retry com backoff/jitter apenas para erros HTTP transitórios.
-
-
-Backend privado para a aba **Letras** do Harpa & Bíblia. Ele centraliza busca, scraping, cache, normalização e obtenção da letra completa sem expor a lógica de coleta no APK.
-
-## Recursos
-
-- fluxo remoto enxuto com apenas **Letras.mus.br + Vagalume**, além da biblioteca local;
-- roteamento adaptativo: **Vagalume `search.excerpt` + página direta de artista para título/artista/trecho**; Letras é fallback quando o índice estruturado não entrega um candidato forte;
-- busca refinada por **título, artista ou trecho da letra**, sem abrir páginas completas de letras durante a listagem;
-- Vagalume encaminha `VAGALUME_API_KEY` também para `search.excerpt` quando configurada e mantém fallback web direto por página de artista;
-- a letra completa é hidratada somente após a seleção do resultado, reduzindo latência e carga externa;
-- GLX Extraction Engine 3.1 com ensemble multi-parser/multi-estratégia, dados estruturados, hydration state, análise estrutural, blocos contextuais e resgate adaptativo;
-- cache TTL limitado em memória e deduplicação de resultados;
-- timeouts, circuit breaker por provedor e rate limit;
-- preservação da URL exata do resultado para evitar uma segunda busca ambígua;
-- endpoint de saúde consumido diretamente pelo APK;
-- proxy bruto desativado por padrão, allowlist explícita e bloqueios SSRF para DNS/IPv4/IPv6/redirecionamentos privados.
-
-## Execução local
-
-Requer Node.js 24 LTS. O `package.json` restringe o runtime a `>=24 <26` para manter o servidor em uma linha LTS previsível.
-
-```bash
-npm install
-npm run dev
-```
-
-O modo `npm run dev` abre o adaptador HTTP local em `http://localhost:3000` usando `node:http`. O painel Vite foi isolado em `web/` e usa `npm run web:dev`. O APK de produção usa por padrão `https://proxy-letras.vercel.app`; `10.0.2.2:3000` permanece apenas como override local de desenvolvimento.
-
-Para executar o servidor de produção:
-
-```bash
-npm start
-```
-
-Para gerar o painel estático opcional, instale também `web/` e execute `npm run web:build`.
-
-Copie `.env.example` para `.env` ou `.env.local` e preencha somente as credenciais dos provedores que quiser habilitar. O scraping do Letras.mus.br não exige token.
-
-## Contrato usado pelo APK
-
-- `GET /api/health` — disponibilidade, versão, provedores ativos e capacidades/versão do GLX;
-- `POST /api/proxy/lyrics/search` — recebe `query`, `artist`, `limit` e `provider`;
-- `POST /api/proxy/lyrics/get` — recebe o resultado selecionado, inclusive `sourceUrl`/`providerRef`, e retorna a letra normalizada;
-- `POST /api/proxy/cache/clear` — limpa o cache (**administrativo**);
-- `GET/POST /api/proxy/config` — configuração sanitizada/persistência em memória (**administrativo**; segredos nunca são devolvidos em claro);
-- `POST /api/proxy/lyrics/raw` — desativado por padrão; quando habilitado exige administração + allowlist e validação SSRF.
-
-A URL do Proxy pode ser alterada no próprio cabeçalho da aba **Letras** no APK, sem recompilar o aplicativo.
-## Produção no Vercel
-
-Endpoint oficial usado pelo APK: `https://proxy-letras.vercel.app`. Produção usa Vercel Functions nativas em `api/`; não existe `server.ts` na raiz e, portanto, não há auto-detecção Express no deployment. O `vercel.json` define apenas `framework: null` (preset Other). O runtime declarado é Node 24.x. O painel continua isolado em `web/`.
-
-Validação pós-deploy recomendada: `GET /api/health` deve responder `status: online` e informar a versão/recursos do GLX.
-
-
-## Fontes ativas do motor 2.10
-
-O modo `multi-provider` permanece como nome de contrato por compatibilidade com o APK, mas o runtime remoto é deliberadamente **dual-source e adaptativo**, não um fan-out para várias fontes:
-
-- **Biblioteca local**: dados embarcados no Proxy, sem rede.
-- **Letras.mus.br**: fonte primária para pesquisas por título/artista; a URL exata é preservada e a letra é extraída pelo GLX somente quando o usuário abre o resultado.
-- **Vagalume**: fonte primária para pesquisas por trecho via `search.excerpt`; para obtenção da letra, usa API `search.php` quando há `VAGALUME_API_KEY` e web/GLX como fallback.
-
-Genius e API customizável foram removidos do caminho de execução e da configuração para reduzir latência, variabilidade, manutenção e risco de timeout. O segundo provedor ativo só é consultado quando necessário. O `/api/health` expõe `activeProviders`, `providerModes` e as capacidades do roteamento adaptativo sem revelar chaves.
-
-## Vercel
-
-O backend de produção é roteado por arquivos TypeScript dentro de `api/`. Não adicione `functions.server.ts` nem restaure `server.ts` na raiz. O dashboard está isolado em `web/`. Execute `npm run test:deploy` antes de publicar.
-
-
-## Vercel Output Directory
-
-Use `public`. The build creates `public/index.html` explicitly, while API routes continue through `api/index.js`.
-
-
-## Correção 2.10.2 — upstream resiliente
-
-- `503` só é emitido quando nenhuma fonte remota consegue concluir a consulta;
-- uma fonte concluída com zero resultados + outra com falha retorna `200 partial:true`, não falso timeout;
-- `VAGALUME_API_KEY` passa a ser encaminhada também para `search.excerpt`;
-- consultas curtas podem usar diretamente a página pública do artista no Vagalume como redundância;
-- o APK realiza uma única repetição automática para 429/502/503/504 e diferencia indisponibilidade de timeout;
-- cache de pesquisa migrou para `search-v8-upstream-resilient`.
-
-## Correção 2.10.1 — cache resiliente
-
-- buscas com `partial:true` nunca são gravadas no cache;
-- buscas vazias (`count:0`) nunca são gravadas no cache;
-- a chave de busca foi migrada para `search-v8-upstream-resilient`, invalidando entradas antigas;
-- `partial:true + count:0` retorna `503 UPSTREAM_UNAVAILABLE` com `Retry-After: 2`;
-- logs incluem `cacheStatus`, `providersUsed`, `providersSkipped`, `providerErrors` e `upstreamLatencyMs`;
-- Vagalume é a rota primária estruturada; Letras fica como fallback de cobertura.
+O GLX continua disponível para fallbacks web do Vagalume e recuperação de páginas, com parse5/htmlparser2, dados estruturados, análise de densidade textual, validação de redirects/hosts, limite de corpo em streaming e diagnóstico de qualidade. Ele não é usado para descobrir título no caminho primário da 2.11.1; essa função agora pertence ao catálogo JSON.

@@ -14,7 +14,7 @@ assert.ok(match, 'isSearchUpstreamUnavailable missing');
 const fnSource = match[0].replace(/^export\s+/, '');
 const classifier = vm.runInNewContext(`(${fnSource.replace(/^function\s+isSearchUpstreamUnavailable/, 'function')})`);
 
-assert.equal(classifier({ total: 0, partial: true, providersCompleted: ['vagalume'], providerErrors: [{ provider: 'letras' }] }), false,
+assert.equal(classifier({ total: 0, partial: true, providersCompleted: ['vagalume'], providerErrors: [{ provider: 'lrclib' }] }), false,
   'completed provider + empty result must be HTTP 200 degraded, never 503');
 assert.equal(classifier({ total: 0, partial: true, providersCompleted: [], providerErrors: [{ provider: 'vagalume' }] }), true,
   'zero completed providers with upstream error must be 503');
@@ -27,10 +27,15 @@ assert.equal(classifier({ total: 0, partial: false, providersCompleted: [] }, 'b
 
 assert.ok(service.includes('providersCompleted.push(provider)'), 'completed-provider accounting missing');
 assert.ok(service.includes('failures < 2 ? 0'), 'provider circuit must not open after a single failure');
-assert.ok(service.includes("cacheKey('search-v8-upstream-resilient'"), 'v8 cache namespace missing');
-assert.ok(service.includes('searchVagalumeArtistPage('), 'Vagalume direct artist-page fallback missing');
-assert.ok(scrapers.includes("url.searchParams.set('apikey'"), 'Vagalume search does not forward configured API key');
+assert.ok(service.includes("cacheKey('search-v9-catalog-resolver'"), 'v9 cache namespace missing');
+assert.ok(service.includes('searchLrclib('), 'LRCLIB catalog search missing');
+assert.ok(scrapers.includes('export async function searchLrclib'), 'LRCLIB scraper contract missing');
+assert.ok(scrapers.includes("url.searchParams.set('q', cleanQuery)"), 'LRCLIB generic title/artist query missing');
+const excerptBlock = scrapers.match(/export async function searchVagalumeExcerpt[\s\S]*?\n\}/)?.[0] || '';
+assert.ok(excerptBlock, 'Vagalume excerpt search missing');
+assert.ok(!excerptBlock.includes("searchParams.set('apikey'"), 'Vagalume search.excerpt must not receive apikey');
+assert.ok(scrapers.includes("searchParams.set('apikey'"), 'Vagalume song retrieval must still support apikey');
 assert.ok(scrapers.includes('export async function searchVagalumeArtistPage'), 'Vagalume artist page search missing');
 assert.ok(router.includes("error: 'As fontes de letras estão temporariamente indisponíveis. Tente novamente.'"), '503 message still masquerades as timeout');
 
-console.log('UPSTREAM_RESILIENCE_OK: 503 requires zero completed providers; Vagalume key forwarding + artist-page fallback + v8 cache verified');
+console.log('UPSTREAM_RESILIENCE_OK: 503 requires zero completed providers; LRCLIB catalog resolver + Vagalume excerpt-without-apikey fallback + v9 cache verified');

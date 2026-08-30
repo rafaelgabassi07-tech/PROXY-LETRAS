@@ -49,10 +49,11 @@ export const defaultProxyConfig = {
             apiKey: process.env.VAGALUME_API_KEY || '',
             timeoutMs: 4500,
         },
-        letrasMusBr: {
+        lrclib: {
+            // Índice JSON moderno para descoberta por título/artista/álbum; não exige chave.
             enabled: true,
-            baseUrl: 'https://www.letras.mus.br',
-            timeoutMs: 5000,
+            baseUrl: 'https://lrclib.net',
+            timeoutMs: 4200,
         },
     },
     filters: {
@@ -106,9 +107,9 @@ export function updateProxyConfig(newConfig) {
                 ...(newConfig.providers?.vagalume || {}),
                 apiKey: mergeSecret(currentConfig.providers.vagalume.apiKey, newConfig.providers?.vagalume?.apiKey),
             },
-            letrasMusBr: {
-                ...currentConfig.providers.letrasMusBr,
-                ...(newConfig.providers?.letrasMusBr || {}),
+            lrclib: {
+                ...currentConfig.providers.lrclib,
+                ...(newConfig.providers?.lrclib || {}),
             },
         },
         filters: {
@@ -152,7 +153,7 @@ export function getSafeProxyConfig() {
                 configured: Boolean(config.providers.vagalume.apiKey),
                 apiKey: config.providers.vagalume.apiKey ? SECRET_PLACEHOLDER : '',
             },
-            letrasMusBr: { ...config.providers.letrasMusBr },
+            lrclib: { ...config.providers.lrclib },
         },
         filters: { ...config.filters },
     };

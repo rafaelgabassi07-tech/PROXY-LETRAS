@@ -7,7 +7,7 @@ export const SearchQuerySchema = z.object({
     title: optionalTrimmed(160),
     theme: optionalTrimmed(80),
     limit: z.coerce.number().int().min(1).max(25).optional().default(12),
-    provider: z.enum(['multi-provider', 'built-in', 'database', 'letras_mus_br', 'vagalume']).optional().default('multi-provider'),
+    provider: z.enum(['multi-provider', 'built-in', 'database', 'lrclib', 'vagalume']).optional().default('multi-provider'),
     includeChords: z.boolean().optional().default(false),
 }).strict();
 export const LyricsRequestSchema = z.object({
@@ -52,10 +52,10 @@ export const ProxyConfigUpdateSchema = z.object({
         rawProxyAllowedHosts: z.array(z.string().trim().min(1).max(253)).max(64).optional(),
         allowLocalAdminWithoutToken: z.boolean().optional(),
     }).strict().optional(),
-    defaultProvider: z.enum(['built-in', 'letras_mus_br', 'vagalume', 'multi-provider']).optional(),
+    defaultProvider: z.enum(['built-in', 'lrclib', 'vagalume', 'multi-provider']).optional(),
     providers: z.object({
         vagalume: providerBase.extend({ apiKey: z.string().max(1000).optional() }).strict().optional(),
-        letrasMusBr: providerBase.optional(),
+        lrclib: providerBase.optional(),
     }).strict().optional(),
     filters: z.object({
         onlyGospel: z.boolean().optional(),

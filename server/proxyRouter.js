@@ -316,14 +316,14 @@ export async function handleApiRequest(url, method, headers, body) {
                     defaultProvider: config.defaultProvider,
                     activeProviders: [
                         'database',
-                        ...(config.providers.letrasMusBr.enabled ? ['letras_mus_br'] : []),
+                        ...(config.providers.lrclib.enabled ? ['lrclib'] : []),
                         ...(config.providers.vagalume.enabled ? ['vagalume'] : []),
                     ],
                     providerModes: {
                         database: 'local',
-                        letrasMusBr: config.providers.letrasMusBr.enabled ? 'web-glx' : 'disabled',
+                        lrclib: config.providers.lrclib.enabled ? 'json-search+id-get' : 'disabled',
                         vagalume: config.providers.vagalume.enabled
-                            ? (config.providers.vagalume.apiKey ? 'api-index+web-glx-fallback' : 'legacy-index+web-glx-fallback')
+                            ? (config.providers.vagalume.apiKey ? 'excerpt-index+artist-web+api-get' : 'excerpt-index+artist-web+glx-get')
                             : 'disabled',
                     },
                     scraperEngine: {
@@ -333,8 +333,8 @@ export async function handleApiRequest(url, method, headers, body) {
                     },
                     capabilities: [
                         'adaptive-dual-source-search',
+                        'lrclib-title-artist-album-search',
                         'vagalume-index-and-artist-page-search',
-                        'letras-search-fallback',
                         'completion-aware-503',
                         ...extractionEngineCapabilities(),
                         'bounded-stream-fetch',

@@ -315,64 +315,6 @@ function compactPreview(raw, query, maxLength = 180) {
     const slice = text.slice(start, start + maxLength).trim();
     return `${start > 0 ? '…' : ''}${slice}${start + maxLength < text.length ? '…' : ''}`;
 }
-function buildAnchorResult(rawHref, rawLabel, base, terms, seen, contextText = '', imageUrl) {
-    const label = normalizeLyricsText(rawLabel.replace(/\s+/g, ' '));
-    if (label.length < 3 || label.length > 220)
-        return null;
-    let url;
-    try {
-        url = new URL(decodeHtml(rawHref), base);
-    }
-    catch {
-        return null;
-    }
-    if (url.hostname.replace(/^www\./, '') !== base.hostname.replace(/^www\./, ''))
-        return null;
-    const path = url.pathname.replace(/^\/+|\/+$/g, '');
-    const parts = path.split('/').filter(Boolean);
-    if (parts.length < 2 || parts.length > 5 || NAV_PATHS.has(parts[0]))
-        return null;
-    if (/^(traducao|cifra|album|discografia|fotos|biografia|playlists?|videos?)$/i.test(parts[1] || ''))
-        return null;
-    url.search = '';
-    url.hash = '';
-    const canonical = url.toString();
-    if (seen.has(canonical))
-        return null;
-    const metadataSearchable = normalizeSearchText(`${label} ${parts.join(' ')}`);
-    const contextualSearchable = normalizeSearchText(contextText);
-    const metadataMatches = terms.filter(term => metadataSearchable.includes(term)).length;
-    const contextMatches = terms.filter(term => contextualSearchable.includes(term)).length;
-    const matchedTerms = Math.max(metadataMatches, contextMatches);
-    // Para busca por trecho, o título/URL naturalmente não contém as palavras pesquisadas.
-    // Aceitamos o resultado quando o próprio card/contexto retornado pela fonte contém parte do trecho.
-    const minimumContextMatches = terms.length >= 5 ? Math.min(3, Math.ceil(terms.length * 0.35)) : 1;
-    const discoveryOnly = terms.length >= 4 && metadataMatches === 0 && contextMatches < minimumContextMatches;
-    // Em buscas por trecho, páginas de resultado podem omitir o trecho e renderizar apenas título/artista.
-    // Mantemos esses links de música como candidatos de descoberta, mas lyricsService só os expõe
-    // depois de validar a letra completa. Para buscas curtas/título, o filtro continua estrito.
-    if (terms.length && !discoveryOnly && metadataMatches === 0 && contextMatches < minimumContextMatches)
-        return null;
-    seen.add(canonical);
-    const split = label.split(/\s[-–—|]\s|\s+por\s+/i).map(part => part.trim()).filter(Boolean);
-    const title = split[0] || label;
-    const artist = split[1] || parts[0].replace(/-/g, ' ').replace(/\b\w/g, char => char.toUpperCase());
-    const exactBonus = terms.length && metadataMatches === terms.length ? 18 : 0;
-    const preview = contextMatches >= minimumContextMatches
-        ? compactPreview(contextText, terms.join(' '))
-        : '';
-    return {
-        id: stableId('letras', canonical),
-        title,
-        artist,
-        preview: preview || 'Resultado encontrado na fonte de letras.',
-        source: 'letras_mus_br',
-        sourceUrl: canonical,
-        imageUrl,
-        discoveryOnly,
-        score: (discoveryOnly ? 34 : 58) + metadataMatches * 8 + contextMatches * 5 + exactBonus,
-    };
-}
 function searchCardContext($, element, base) {
     const container = $(element).closest('li,article,[class*="result"],[class*="card"],[data-testid*="result"],section,div').first();
     const contextText = container.length ? container.text() : $(element).parent().text();
@@ -384,115 +326,6 @@ function searchCardContext($, element, base) {
         contextText: String(contextText || '').slice(0, 1600),
         imageUrl: safeMediaUrl(rawImage || background || '', base),
     };
-}
-function parseAnchorResultsWithParser(html, base, terms, seen, parser, maxCandidates) {
-    const results = [];
-    const $ = parser === 'parse5'
-        ? load(html, { scriptingEnabled: false })
-        : load(html, { xml: { xmlMode: false, decodeEntities: true } });
-    $('a[href]').each((_index, element) => {
-        if (results.length >= maxCandidates)
-            return false;
-        const label = [$(element).text(), $(element).attr('aria-label'), $(element).attr('title')]
-            .filter(Boolean)
-            .join(' ');
-        const context = searchCardContext($, element, base);
-        const result = buildAnchorResult($(element).attr('href') || '', label, base, terms, seen, context.contextText, context.imageUrl);
-        if (result)
-            results.push(result);
-        return undefined;
-    });
-    return results;
-}
-function collectStructuredSearchResults(html, base, terms, seen, limit) {
-    const results = [];
-    let $;
-    try {
-        $ = load(html, { scriptingEnabled: false });
-    }
-    catch {
-        return results;
-    }
-    const visit = (node, depth = 0) => {
-        if (depth > 16 || node == null || results.length >= limit)
-            return;
-        if (Array.isArray(node)) {
-            for (const item of node.slice(0, 700))
-                visit(item, depth + 1);
-            return;
-        }
-        if (typeof node !== 'object')
-            return;
-        const record = node;
-        const rawUrl = record.url ?? record.href ?? record.path ?? record.share_url ?? record.songUrl;
-        const rawTitle = record.title ?? record.name ?? record.songTitle ?? record.song_name;
-        const rawImage = record.image ?? record.imageUrl ?? record.image_url ?? record.thumbnail ?? record.cover ?? record.coverArt ?? record.cover_art_url ?? record.song_art_image_thumbnail_url ?? record.song_art_image_url;
-        const rawAlbum = record.album?.name ?? record.album ?? record.albumName ?? record.album_name;
-        const rawExcerpt = record.excerpt ?? record.snippet ?? record.preview ?? record.highlight ?? record.text;
-        const artistObject = record.artist ?? record.primary_artist ?? record.author ?? record.artistName;
-        const rawArtist = typeof artistObject === 'string'
-            ? artistObject
-            : artistObject && typeof artistObject === 'object'
-                ? (artistObject.name ?? artistObject.title)
-                : undefined;
-        if (typeof rawUrl === 'string' && typeof rawTitle === 'string') {
-            const label = rawArtist ? `${rawTitle} - ${String(rawArtist)}` : rawTitle;
-            const built = buildAnchorResult(rawUrl, label, base, terms, seen, typeof rawExcerpt === 'string' ? rawExcerpt : '', safeMediaUrl(typeof rawImage === 'string' ? rawImage : '', base));
-            if (built)
-                results.push({
-                    ...built,
-                    album: typeof rawAlbum === 'string' ? rawAlbum : built.album,
-                    preview: typeof rawExcerpt === 'string' && rawExcerpt.trim() ? compactPreview(rawExcerpt, terms.join(' ')) : built.preview,
-                    score: built.score + 6,
-                });
-        }
-        for (const value of Object.values(record).slice(0, 900))
-            visit(value, depth + 1);
-    };
-    $('script').slice(0, 100).each((_index, element) => {
-        if (results.length >= limit)
-            return false;
-        const type = ($(element).attr('type') || '').toLowerCase();
-        const id = ($(element).attr('id') || '').toLowerCase();
-        if (!type.includes('json') && !/__next_data__|__nuxt|apollo|initial_state|hydration/.test(id))
-            return undefined;
-        const raw = $(element).text().trim();
-        if (!raw || raw.length > 1_500_000)
-            return undefined;
-        try {
-            visit(JSON.parse(raw));
-        }
-        catch { /* script não é JSON puro */ }
-        return undefined;
-    });
-    return results;
-}
-function parseAnchorResults(html, baseUrl, query, limit) {
-    const base = new URL(baseUrl);
-    const terms = meaningfulTerms(query);
-    const results = [];
-    const seen = new Set();
-    for (const parser of ['parse5', 'htmlparser2']) {
-        try {
-            results.push(...parseAnchorResultsWithParser(html, base, terms, seen, parser, limit * 8));
-        }
-        catch {
-            // O segundo parser e os fallbacks estruturados continuam disponíveis.
-        }
-    }
-    if (results.length < limit) {
-        results.push(...collectStructuredSearchResults(html, base, terms, seen, limit * 6));
-    }
-    if (results.length < limit) {
-        const pattern = /<a\b([^>]*?)href=["']([^"']+)["']([^>]*)>([\s\S]*?)<\/a>/gi;
-        let match;
-        while ((match = pattern.exec(html)) !== null && results.length < limit * 10) {
-            const result = buildAnchorResult(match[2], htmlToText(match[4]), base, terms, seen);
-            if (result)
-                results.push(result);
-        }
-    }
-    return results.sort((a, b) => b.score - a.score).slice(0, limit);
 }
 function slugifySourcePart(value) {
     return value
@@ -588,14 +421,84 @@ function parseProviderSearchHtml(html, baseUrl, query, source, limit) {
     }
     return results.sort((a, b) => b.score - a.score).slice(0, limit);
 }
-export async function searchVagalumeExcerpt(apiBaseUrl, webBaseUrl, apiKey, query, limit, timeoutMs) {
+
+function plainFromSyncedLyrics(raw) {
+    return normalizeLyricsText(String(raw || '')
+        .split(/\r?\n/)
+        .map(line => line.replace(/^\s*(?:\[[0-9]{1,3}:[0-9]{2}(?:[.:][0-9]{1,3})?\])+\s*/, ''))
+        .join('\n'));
+}
+function mapLrclibRecord(doc, query, index = 0, baseUrl = 'https://lrclib.net') {
+    const providerRef = String(doc?.id ?? '').trim();
+    const title = String(doc?.trackName || doc?.name || '').trim();
+    const artist = String(doc?.artistName || '').trim();
+    if (!providerRef || !title || !artist || doc?.instrumental === true)
+        return null;
+    const plainLyrics = String(doc?.plainLyrics || '').trim();
+    const syncedLyrics = String(doc?.syncedLyrics || '').trim();
+    const lyrics = plainLyrics || plainFromSyncedLyrics(syncedLyrics);
+    const normalizedQuery = normalizeSearchText(query);
+    const normalizedTitle = normalizeSearchText(title);
+    const normalizedArtist = normalizeSearchText(artist);
+    const exactTitle = normalizedQuery && normalizedTitle === normalizedQuery;
+    const exactArtist = normalizedQuery && normalizedArtist === normalizedQuery;
+    const titleContains = normalizedQuery && (normalizedTitle.includes(normalizedQuery) || normalizedQuery.includes(normalizedTitle));
+    const artistContains = normalizedQuery && (normalizedArtist.includes(normalizedQuery) || normalizedQuery.includes(normalizedArtist));
+    const relevanceBonus = exactTitle ? 32 : exactArtist ? 26 : titleContains ? 18 : artistContains ? 14 : 0;
+    return {
+        id: `lrclib-${providerRef}`,
+        title,
+        artist,
+        album: String(doc?.albumName || '').trim() || undefined,
+        preview: lyrics ? compactPreview(lyrics, query) : `Resultado encontrado no LRCLIB para ${artist}.`,
+        source: 'lrclib',
+        sourceUrl: `${baseUrl.replace(/\/+$/, '')}/api/get/${encodeURIComponent(providerRef)}`,
+        providerRef,
+        score: 82 - Math.min(index, 20) + relevanceBonus + (lyrics ? 4 : 0),
+    };
+}
+export async function searchLrclib(baseUrl, query, artist, title, limit, timeoutMs) {
+    const normalizedBase = baseUrl.replace(/\/+$/, '');
+    const baseHost = new URL(normalizedBase).hostname;
+    const url = new URL('/api/search', normalizedBase);
+    const cleanQuery = String(query || '').trim();
+    const cleanArtist = String(artist || '').trim();
+    const cleanTitle = String(title || '').trim();
+    if (cleanTitle) {
+        url.searchParams.set('track_name', cleanTitle);
+        if (cleanArtist) url.searchParams.set('artist_name', cleanArtist);
+    }
+    else if (cleanQuery) {
+        url.searchParams.set('q', cleanQuery);
+    }
+    else if (cleanArtist) {
+        url.searchParams.set('q', cleanArtist);
+    }
+    else {
+        return [];
+    }
+    const raw = await fetchText(url.toString(), timeoutMs, {
+        Accept: 'application/json',
+        'User-Agent': PROXY_API_USER_AGENT,
+        'Lrclib-Client': PROXY_API_USER_AGENT,
+    }, [baseHost]);
+    const data = JSON.parse(raw);
+    if (!Array.isArray(data))
+        throw new Error('LRCLIB INVALID_JSON');
+    return data
+        .slice(0, Math.max(1, Math.min(limit * 2, 20)))
+        .map((doc, index) => mapLrclibRecord(doc, cleanTitle || cleanQuery || cleanArtist, index, normalizedBase))
+        .filter(Boolean)
+        .slice(0, limit);
+}
+
+export async function searchVagalumeExcerpt(apiBaseUrl, webBaseUrl, query, limit, timeoutMs) {
     const apiBase = apiBaseUrl.replace(/\/+$/, '');
     const apiHost = new URL(apiBase).hostname;
     const webBase = webBaseUrl.replace(/\/+$/, '');
     const url = new URL(`${apiBase}/search.excerpt`);
     url.searchParams.set('q', query.trim());
     url.searchParams.set('limit', String(Math.max(1, Math.min(limit, 25))));
-    if (String(apiKey || '').trim()) url.searchParams.set('apikey', String(apiKey).trim());
     const raw = await fetchText(url.toString(), timeoutMs, { Accept: 'application/json' }, [apiHost]);
     const data = JSON.parse(raw);
     const docs = Array.isArray(data?.response?.docs) ? data.response.docs : [];
@@ -712,35 +615,6 @@ export async function searchVagalumeWeb(webBaseUrl, query, artist, limit, timeou
         throw lastError;
     return [];
 }
-export async function searchLetrasMusBr(baseUrl, query, limit, timeoutMs) {
-    const normalizedBase = baseUrl.replace(/\/+$/, '');
-    const baseHost = new URL(normalizedBase).hostname;
-    const budget = totalBudget(timeoutMs);
-    const q = encodeURIComponent(query.trim());
-    const searchUrls = [
-        `${normalizedBase}/?q=${q}`,
-        `${normalizedBase}/buscar/?q=${q}`,
-        `${normalizedBase}/busca/?q=${q}`,
-    ];
-    let lastError;
-    for (const url of searchUrls) {
-        const attemptBudget = budget.next(1900);
-        if (!attemptBudget)
-            break;
-        try {
-            const html = await fetchText(url, attemptBudget, {}, [baseHost]);
-            const parsed = parseAnchorResults(html, normalizedBase, query, limit);
-            if (parsed.length)
-                return parsed;
-        }
-        catch (error) {
-            lastError = error;
-        }
-    }
-    if (lastError)
-        throw lastError;
-    return [];
-}
 function pageStructuredMedia(html, sourceUrl) {
     let $;
     try {
@@ -784,7 +658,8 @@ function pageStructuredMedia(html, sourceUrl) {
     return { imageUrl, album };
 }
 export async function fetchScrapedSong(sourceUrl, source, timeoutMs) {
-    const allowedHosts = source === 'vagalume' ? ['vagalume.com.br'] : ['letras.mus.br', 'letras.com'];
+    if (source !== 'vagalume') throw new Error('Fonte web não autorizada');
+    const allowedHosts = ['vagalume.com.br'];
     if (!isAllowedLyricsUrl(sourceUrl, allowedHosts))
         throw new Error('URL de letra não autorizada');
     const html = await fetchText(sourceUrl, timeoutMs, {}, allowedHosts);
@@ -796,7 +671,7 @@ export async function fetchScrapedSong(sourceUrl, source, timeoutMs) {
     const album = metaContent(html, 'music:album') || structured.album || undefined;
     const imageUrl = safeMediaUrl(metaContent(html, 'og:image') || metaContent(html, 'twitter:image') || structured.imageUrl || '', new URL(sourceUrl));
     return {
-        id: stableId(source === 'vagalume' ? 'vagalume' : 'letras', sourceUrl),
+        id: stableId('vagalume', sourceUrl),
         title,
         artist,
         album,
@@ -809,6 +684,80 @@ export async function fetchScrapedSong(sourceUrl, source, timeoutMs) {
         fetchedAt: new Date().toISOString(),
     };
 }
+
+export async function fetchLrclibSong(baseUrl, providerRef, artist, title, timeoutMs) {
+    const normalizedBase = baseUrl.replace(/\/+$/, '');
+    const baseHost = new URL(normalizedBase).hostname;
+    const id = String(providerRef || '').replace(/^lrclib-/, '').trim();
+    let doc = null;
+    if (/^\d+$/.test(id)) {
+        const url = new URL(`/api/get/${encodeURIComponent(id)}`, normalizedBase);
+        const raw = await fetchText(url.toString(), timeoutMs, {
+            Accept: 'application/json',
+            'User-Agent': PROXY_API_USER_AGENT,
+            'Lrclib-Client': PROXY_API_USER_AGENT,
+        }, [baseHost]);
+        doc = JSON.parse(raw);
+    }
+    else if (String(title || '').trim()) {
+        const matches = await searchLrclib(normalizedBase, '', artist, title, 5, timeoutMs);
+        if (!matches.length) return null;
+        const match = matches[0];
+        const resolvedId = String(match.providerRef || '').trim();
+        if (!/^\d+$/.test(resolvedId)) return null;
+        const url = new URL(`/api/get/${encodeURIComponent(resolvedId)}`, normalizedBase);
+        const raw = await fetchText(url.toString(), timeoutMs, {
+            Accept: 'application/json',
+            'User-Agent': PROXY_API_USER_AGENT,
+            'Lrclib-Client': PROXY_API_USER_AGENT,
+        }, [baseHost]);
+        doc = JSON.parse(raw);
+    }
+    if (!doc || doc?.instrumental === true)
+        return null;
+    const fullLyrics = normalizeLyricsText(String(doc?.plainLyrics || '').trim()) || plainFromSyncedLyrics(doc?.syncedLyrics || '');
+    if (!fullLyrics)
+        return null;
+    const resolvedId = String(doc?.id ?? id).trim();
+    const resolvedTitle = String(doc?.trackName || doc?.name || title || '').trim();
+    const resolvedArtist = String(doc?.artistName || artist || '').trim();
+    if (!resolvedTitle || !resolvedArtist)
+        return null;
+    const lineCount = fullLyrics.split('\n').filter(Boolean).length;
+    const wordCount = fullLyrics.split(/\s+/).filter(Boolean).length;
+    return {
+        id: `lrclib-${resolvedId || stableId('lrclib', `${resolvedArtist}:${resolvedTitle}`)}`,
+        title: resolvedTitle,
+        artist: resolvedArtist,
+        album: String(doc?.albumName || '').trim() || undefined,
+        fullLyrics,
+        source: 'lrclib',
+        sourceUrl: resolvedId ? `${normalizedBase}/api/get/${encodeURIComponent(resolvedId)}` : undefined,
+        extractionMethod: 'api',
+        extraction: {
+            engine: EXTRACTION_ENGINE_NAME,
+            version: EXTRACTION_ENGINE_VERSION,
+            method: 'api',
+            parser: 'lrclib-json',
+            candidateCount: 1,
+            quality: {
+                score: 100,
+                confidence: 0.995,
+                charCount: fullLyrics.length,
+                wordCount,
+                lineCount,
+                distinctLineRatio: 1,
+                duplicateLineRatio: 0,
+                averageLineLength: lineCount ? Number((fullLyrics.length / lineCount).toFixed(2)) : 0,
+                linkDensity: 0,
+            },
+            signals: ['provider-api', 'lrclib'],
+            warnings: [],
+        },
+        fetchedAt: new Date().toISOString(),
+    };
+}
+
 export async function fetchVagalumeSong(baseUrl, apiKey, artist, title, timeoutMs) {
     if (!apiKey.trim() || !artist.trim() || !title.trim())
         return null;

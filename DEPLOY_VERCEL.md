@@ -1,53 +1,42 @@
-# Deploy no Vercel — Proxy 2.10.2
+# Deploy no Vercel — Proxy 2.11.1
 
-## Estrutura atual
+## Estrutura
 
-As rotas públicas possuem Functions `.js` físicas e leves em `api/` (por exemplo `api/proxy/lyrics/search.js`). Elas delegam para `api/index.js`, que preserva o pathname original e encaminha a chamada ao router compartilhado.
+Publique a raiz contendo `api/`, `server/`, `public/`, `scripts/`, `package.json` e `vercel.json`. As 12 rotas públicas possuem Functions `.js` físicas e delegam ao router compartilhado.
 
-O health continua com caminho leve. Busca e obtenção de letra carregam o runtime sob demanda.
-
-## Fontes ativas
-
-O runtime remoto usa somente **Letras.mus.br + Vagalume**. O valor `multi-provider` permanece no contrato HTTP para compatibilidade, mas significa roteamento adaptativo entre essas duas fontes:
-
-- título/artista/trecho: Vagalume `search.excerpt`/página de artista; Letras como fallback;
-- trecho: Vagalume `search.excerpt` primeiro; Letras somente se necessário;
-- a listagem não abre páginas completas de letras;
-- a hidratação da letra completa ocorre em `/api/proxy/lyrics/get` após o usuário selecionar um resultado.
-
-## Configuração
+Configuração esperada:
 
 - Framework Preset: Other
 - Root Directory: `./`
-- Install Command: automático (`npm install`)
-- Build Command: o `vercel.json` usa `echo GLX_NO_BUILD_REQUIRED`
+- Build Command: `echo GLX_NO_BUILD_REQUIRED`
 - Output Directory: `public`
-- Node.js: 24.x (definido em `package.json`)
-- `LYRICS_SEARCH_BUDGET_MS`: opcional; padrão 7600 ms, faixa 3200–9000 ms
-- `LYRICS_GET_BUDGET_MS`: opcional; padrão 8500 ms, faixa 5000–12000 ms
-- `VAGALUME_API_KEY`: recomendada para a API oficial; sem chave, o Proxy usa os fallbacks web das duas fontes
+- Node.js: 24.x
+- `VAGALUME_API_KEY`: recomendada
 
-## Git / upload
+## Fontes remotas
 
-Faça o deploy da pasta raiz deste Proxy, mantendo `api/`, `server/`, `public/`, `package.json` e `vercel.json`.
+- `lrclib`: descoberta primária de título/artista/álbum e letra por ID.
+- `vagalume`: trecho, cobertura brasileira/gospel e fallback de letra.
 
-## Smoke tests
+Letras.mus.br foi removido do runtime de busca porque as rotas de pesquisa usadas anteriormente estavam retornando HTTP 404 na Vercel.
 
-1. `GET /api/health` → HTTP 200, `status: "online"` e `activeProviders` igual a `database`, `letras_mus_br`, `vagalume`.
-2. `POST /api/proxy/lyrics/search` com `{ "query": "nome do artista", "provider": "multi-provider" }` → HTTP 200 e, quando Letras responder com candidato forte, `providersUsed: ["letras_mus_br"]`.
-3. Repita com nome de música.
-4. Repita com um trecho claro de 5+ palavras → o Vagalume deve ser a fonte primária; a busca não deve abrir uma página de letra completa.
-5. Abra um resultado em `POST /api/proxy/lyrics/get` e confirme `fullLyrics` não vazio.
-6. Simule falha/resultado vazio da fonte primária e confirme que apenas então a segunda fonte aparece em `providersUsed`.
+## Cache
 
+A versão 2.11.1 usa o namespace `search-v9-catalog-resolver`. Isso invalida automaticamente respostas produzidas pelas estratégias v6/v7/v8. Resultados vazios ou parciais nunca são armazenados.
 
-### Após publicar 2.10.2
+## Smoke tests pós-deploy
 
-Não é necessário limpar manualmente o cache antigo: a chave de busca mudou para `search-v8-upstream-resilient`. Para confirmar a correção, um log de busca válida deve mostrar `cacheStatus:"stored"` na primeira consulta e `cacheStatus:"hit"` nas seguintes. Se as fontes falharem, o log deve mostrar HTTP 503, `cached:false` e `cacheStatus:"bypass-partial"`; esse resultado jamais deve virar cache hit.
+1. `GET /api/health` → HTTP 200, versão `2.11.1`, `activeProviders` contendo `database`, `lrclib`, `vagalume`.
+2. Pesquise **nome de música** em `POST /api/proxy/lyrics/search`. O caminho normal deve mostrar `providersUsed:["lrclib"]` quando houver candidato forte.
+3. Pesquise **nome de artista**. Deve retornar músicas sem exigir página/slug adivinhado.
+4. Pesquise um **trecho claro de 5+ palavras**. O Vagalume deve aparecer primeiro em `providersUsed`.
+5. Abra um resultado em `/api/proxy/lyrics/get` e confirme `fullLyrics` não vazio.
+6. Repita uma busca não vazia e confirme `cacheStatus:"hit"`.
+7. Em falha parcial, confirme `cached:false` e `cacheStatus:"bypass-partial"`.
 
+## Interpretação do diagnóstico
 
-### Diagnóstico esperado no 2.10.2
-
-- `status:200, partial:true, providersCompleted:[...]`: ao menos uma fonte concluiu; não é timeout.
-- `status:503, providersCompleted:[]`: nenhuma fonte remota concluiu; resposta é `retryable:true` e não entra em cache.
-- `providersUsed`, `providersCompleted`, `providersSkipped` e `providerErrors` identificam exatamente a etapa degradada.
+- `status:200, partial:false, resultCount>0`: fluxo saudável.
+- `status:200, partial:true, resultCount>0`: resultado útil com uma fonte degradada; não cacheado.
+- `status:200, partial:true, resultCount:0`: pelo menos uma fonte concluiu, mas o conjunto ficou incompleto; o APK 2.11 repete uma vez automaticamente.
+- `status:503, providersCompleted:[]`: nenhuma fonte remota concluiu; `Retry-After: 2` e sem cache.

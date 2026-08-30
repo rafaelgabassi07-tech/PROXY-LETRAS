@@ -1,12 +1,12 @@
 /**
  * Motor de busca e obtenção de letras.
- * Estratégia: banco local + duas fontes remotas adaptativas (Letras/Vagalume),
+ * Estratégia: banco local + duas fontes remotas adaptativas (LRCLIB/Vagalume),
  * cache limitado, fallback sob demanda e recuperação exata via sourceUrl.
  */
 import { LRUCache } from 'lru-cache';
 import { GOSPEL_DATABASE } from './gospelDatabase.js';
 import { getProxyConfig } from './proxyConfig.js';
-import { fetchScrapedSong, fetchVagalumeSong, searchLetrasMusBr, searchVagalumeArtistPage, searchVagalumeExcerpt, searchVagalumeWeb, } from './scrapers.js';
+import { fetchLrclibSong, fetchScrapedSong, fetchVagalumeSong, searchLrclib, searchVagalumeArtistPage, searchVagalumeExcerpt, searchVagalumeWeb, } from './scrapers.js';
 const memoryCache = new LRUCache({
     max: 5000,
     ttlAutopurge: true,
@@ -564,7 +564,7 @@ export async function searchGospelSongs(params) {
         provider: String(params.provider || '').trim(),
         limit,
     };
-    const key = cacheKey('search-v8-upstream-resilient', normalizedParams);
+    const key = cacheKey('search-v9-catalog-resolver', normalizedParams);
     const cached = getFromCache(key);
     if (cached && reusableSearchCacheEntry(cached))
         return { ...cached, cached: true, cacheStatus: 'hit' };
@@ -574,7 +574,7 @@ export async function searchGospelSongs(params) {
 
     const config = getProxyConfig();
     const requestedProvider = normalizedParams.provider || config.defaultProvider;
-    const desiredProvider = ['built-in', 'database', 'letras_mus_br', 'vagalume'].includes(requestedProvider)
+    const desiredProvider = ['built-in', 'database', 'lrclib', 'vagalume'].includes(requestedProvider)
         ? requestedProvider
         : 'multi-provider';
     const localAllowed = desiredProvider === 'multi-provider' || desiredProvider === 'built-in' || desiredProvider === 'database';
@@ -597,7 +597,7 @@ export async function searchGospelSongs(params) {
             if (quality.matched || quality.exactPhrase || quality.coverage >= 0.72)
                 return true;
         }
-        // Se a consulta longa for, na prática, o título completo, preserva um resultado forte do Letras.
+        // Se a consulta longa for, na prática, o título completo, preserva um resultado forte do catálogo remoto.
         return diceSimilarity(result.title || '', normalizedParams.query) >= 0.76 ||
             tokenCoverage(result.title || '', searchTerms(normalizedParams.query)) >= 0.86;
     };
@@ -608,19 +608,16 @@ export async function searchGospelSongs(params) {
         return resultIntentScore(result, normalizedParams) >= 78;
     });
 
-    const runLetras = async (budgetMs) => {
-        if (!budgetMs || !config.providers.letrasMusBr.enabled)
+    const runLrclib = async (budgetMs) => {
+        if (!budgetMs || !config.providers.lrclib.enabled)
             return [];
-        return searchVariants(
-            queryVariants,
+        return searchLrclib(
+            config.providers.lrclib.baseUrl,
+            normalizedParams.query || query,
+            normalizedParams.artist,
+            normalizedParams.title,
             limit,
-            (variant, variantLimit) => searchLetrasMusBr(
-                config.providers.letrasMusBr.baseUrl,
-                variant,
-                variantLimit,
-                Math.min(config.providers.letrasMusBr.timeoutMs, budgetMs)
-            ),
-            excerptMode ? 1 : 2
+            Math.min(config.providers.lrclib.timeoutMs, budgetMs)
         );
     };
 
@@ -635,8 +632,8 @@ export async function searchGospelSongs(params) {
         let lastError = null;
         const candidateBatches = [];
 
-        // O índice JSON continua sendo o caminho de menor custo. Quando uma chave foi
-        // configurada, ela precisa acompanhar também a busca (não apenas /search.php).
+        // O índice JSON search.excerpt é o caminho de menor custo e não usa apikey.
+        // A credencial do Vagalume é reservada para search.php?musid=... ao carregar a letra.
         // Para consultas curtas, uma página direta de artista é tentada em paralelo: isso
         // mantém o Proxy útil mesmo quando o endpoint de busca da API estiver restrito.
         const primaryAttempts = [];
@@ -646,7 +643,6 @@ export async function searchGospelSongs(params) {
                 searchVagalumeExcerpt(
                     config.providers.vagalume.baseUrl,
                     config.providers.vagalume.webBaseUrl,
-                    config.providers.vagalume.apiKey,
                     primaryQuery,
                     limit,
                     Math.min(config.providers.vagalume.timeoutMs, indexBudget)
@@ -709,18 +705,18 @@ export async function searchGospelSongs(params) {
     if (query && desiredProvider !== 'built-in' && desiredProvider !== 'database') {
         // Fluxo adaptativo de duas fontes:
         // - título/artista e trecho: índice JSON do Vagalume primeiro;
-        // - Letras: fallback quando o índice não entregar candidato forte;
+        // - LRCLIB: descoberta estruturada por título/artista/álbum;
         // O segundo provedor só é consultado se o primeiro não produzir um candidato forte.
         const providerPlan = desiredProvider === 'multi-provider'
-            // O índice JSON do Vagalume é mais barato/estável que scraping HTML e também
-            // retorna título + artista. Letras fica como fallback de cobertura.
-            ? ['vagalume', 'letras_mus_br']
+            // Título/artista/álbum: LRCLIB é um índice JSON explícito e estável.
+            // Trecho longo: Vagalume continua primeiro porque seu índice pode pesquisar o texto da letra.
+            ? (excerptMode ? ['vagalume', 'lrclib'] : ['lrclib', 'vagalume'])
             : [desiredProvider];
 
         for (const provider of providerPlan) {
             const enabled = provider === 'vagalume'
                 ? config.providers.vagalume.enabled
-                : config.providers.letrasMusBr.enabled;
+                : config.providers.lrclib.enabled;
             if (!enabled) {
                 providersSkipped.push({ provider, reason: 'DISABLED' });
                 partial = true;
@@ -740,7 +736,7 @@ export async function searchGospelSongs(params) {
             try {
                 let batch = provider === 'vagalume'
                     ? await runVagalume(budgetMs)
-                    : await runLetras(budgetMs);
+                    : await runLrclib(budgetMs);
                 if (excerptMode)
                     batch = batch.filter(excerptCandidateMatches).map(result => ({ ...result, lyricsVerified: true }));
                 providerSucceeded(provider);
@@ -824,7 +820,7 @@ export async function getGospelSongLyrics(params) {
 
     const config = getProxyConfig();
     const requestedProvider = normalized.provider || config.defaultProvider;
-    const desiredProvider = ['built-in', 'database', 'letras_mus_br', 'vagalume'].includes(requestedProvider)
+    const desiredProvider = ['built-in', 'database', 'lrclib', 'vagalume'].includes(requestedProvider)
         ? requestedProvider
         : 'multi-provider';
     const exactLocal = localSong(normalized);
@@ -853,21 +849,30 @@ export async function getGospelSongLyrics(params) {
     // Primeiro tenta exatamente a URL entregue pela pesquisa. Links antigos de Genius/custom
     // não são mais acessados; título+artista são recuperados pelas duas fontes ativas.
     if (normalized.sourceUrl) {
-        const directSource = normalized.sourceUrl.includes('vagalume.com.br')
-            ? 'vagalume'
-            : (normalized.sourceUrl.includes('letras.mus.br') || normalized.sourceUrl.includes('letras.com'))
-                ? 'letras_mus_br'
+        const directSource = normalized.sourceUrl.includes('lrclib.net')
+            ? 'lrclib'
+            : normalized.sourceUrl.includes('vagalume.com.br')
+                ? 'vagalume'
                 : null;
         if (directSource) {
             try {
                 const directBudget = remainingBudget(deadline, 3300);
                 if (directBudget) {
-                    const timeout = directSource === 'vagalume'
-                        ? config.providers.vagalume.timeoutMs
-                        : config.providers.letrasMusBr.timeoutMs;
-                    const scraped = await fetchScrapedSong(normalized.sourceUrl, directSource, Math.min(timeout, directBudget));
-                    if (scraped && songMatchesRequest(scraped, normalized))
-                        return saveSong(scraped, directSource);
+                    const directSong = directSource === 'lrclib'
+                        ? await fetchLrclibSong(
+                            config.providers.lrclib.baseUrl,
+                            normalized.providerRef || normalized.id,
+                            normalized.artist,
+                            normalized.title,
+                            Math.min(config.providers.lrclib.timeoutMs, directBudget)
+                        )
+                        : await fetchScrapedSong(
+                            normalized.sourceUrl,
+                            'vagalume',
+                            Math.min(config.providers.vagalume.timeoutMs, directBudget)
+                        );
+                    if (directSong && songMatchesRequest(directSong, normalized))
+                        return saveSong(directSong, directSource);
                 }
             }
             catch {
@@ -880,42 +885,16 @@ export async function getGospelSongLyrics(params) {
     if (!query)
         return { song: null, provider: desiredProvider, cached: false };
 
-    const lookupLetras = async (budgetMs) => {
-        if (!budgetMs || !config.providers.letrasMusBr.enabled || !providerAvailable('letras_mus_br'))
+    const lookupLrclib = async (budgetMs) => {
+        if (!budgetMs || !config.providers.lrclib.enabled || !providerAvailable('lrclib'))
             return null;
-        const providerDeadline = Date.now() + budgetMs;
-        const searchBudget = remainingBudget(providerDeadline, 2100);
-        if (!searchBudget)
-            return null;
-        const matches = await searchLetrasMusBr(
-            config.providers.letrasMusBr.baseUrl,
-            query,
-            5,
-            Math.min(config.providers.letrasMusBr.timeoutMs, searchBudget)
+        return fetchLrclibSong(
+            config.providers.lrclib.baseUrl,
+            normalized.providerRef || normalized.id,
+            normalized.artist,
+            normalized.title,
+            Math.min(config.providers.lrclib.timeoutMs, budgetMs)
         );
-        const candidates = matches
-            .filter(match => match.sourceUrl)
-            .map(match => ({ match, confidence: sameSongConfidence(normalized, match) }))
-            .sort((a, b) => b.confidence - a.confidence)
-            .slice(0, 2);
-        for (const { match, confidence } of candidates) {
-            if (confidence < 0.54)
-                continue;
-            const fetchBudget = remainingBudget(providerDeadline, 2300);
-            if (!fetchBudget)
-                break;
-            try {
-                const scraped = await fetchScrapedSong(
-                    match.sourceUrl,
-                    'letras_mus_br',
-                    Math.min(config.providers.letrasMusBr.timeoutMs, fetchBudget)
-                );
-                if (scraped && songMatchesRequest(scraped, normalized))
-                    return scraped;
-            }
-            catch { /* tenta o próximo candidato */ }
-        }
-        return null;
     };
 
     const lookupVagalume = async (budgetMs) => {
@@ -975,8 +954,8 @@ export async function getGospelSongLyrics(params) {
     };
 
     const providerPlan = desiredProvider === 'vagalume'
-        ? ['vagalume', 'letras_mus_br']
-        : ['letras_mus_br', 'vagalume'];
+        ? ['vagalume', 'lrclib']
+        : ['lrclib', 'vagalume'];
     for (const provider of providerPlan) {
         const budgetMs = remainingBudget(deadline, provider === providerPlan[0] ? 4500 : 3000);
         if (!budgetMs)
@@ -984,7 +963,7 @@ export async function getGospelSongLyrics(params) {
         try {
             const song = provider === 'vagalume'
                 ? await lookupVagalume(budgetMs)
-                : await lookupLetras(budgetMs);
+                : await lookupLrclib(budgetMs);
             if (song)
                 return saveSong(song, provider);
             providerFailed(provider);
