@@ -1,4 +1,4 @@
-# Gospel Lyrics Proxy 2.7.3
+# Gospel Lyrics Proxy 2.7.4
 
 Produção Vercel consolidada em uma única Function (`api/index.js`) com limpeza automática de rotas legadas no build.
 

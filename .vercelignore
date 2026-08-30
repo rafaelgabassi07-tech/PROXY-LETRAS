@@ -1,4 +1,3 @@
-# Keep only production/runtime assets in source uploads.
 source/
 **/*.ts
 **/*.tsx

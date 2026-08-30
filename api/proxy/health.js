@@ -1,2 +1,1 @@
-import { vercelHealthHandler } from '../../server/healthHandler.js';
-export default vercelHealthHandler;
+export { default } from '../index.js';

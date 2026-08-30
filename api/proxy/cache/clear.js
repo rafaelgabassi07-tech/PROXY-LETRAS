@@ -1,2 +1,1 @@
-import { vercelRouterHandler } from '../../../server/vercelAdapter.js';
-export default vercelRouterHandler;
+export { default } from '../../index.js';

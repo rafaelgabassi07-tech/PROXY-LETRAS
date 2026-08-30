@@ -1,12 +1,7 @@
-# Clean deploy — Proxy 2.7.3
+# Proxy 2.7.4 — deploy compatível com Vercel
 
-Esta revisão usa uma única Vercel Function: `api/index.js`.
+Esta revisão não apaga arquivos durante o build. Todas as rotas públicas possuem Functions `.js` físicas e leves que delegam ao `api/index.js`.
 
-O build executa `scripts/prepare-vercel.mjs`, que remove Functions antigas existentes em `api/` antes do empacotamento. Isso protege deployments feitos sobre repositórios que ainda contêm rotas `.ts`/`.js` de revisões anteriores.
+Isso evita o erro em que o Vercel identifica uma Function antes do build e depois não a encontra porque um script de limpeza a removeu.
 
-Para Git, ainda é recomendado remover os arquivos legados do repositório e criar um novo commit. O Vercel associa deployments Git ao SHA do commit.
-
-
-## Vercel Output Directory
-
-Use `public`. The build creates `public/index.html` explicitly, while API routes continue through `api/index.js`.
+O pacote não contém TypeScript. Se o projeto remoto ainda tiver `.ts` antigos versionados, remova-os do repositório antes do commit; `.vercelignore` também os exclui em fluxos de upload que respeitam essa configuração.

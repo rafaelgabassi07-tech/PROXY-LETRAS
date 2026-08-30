@@ -5,28 +5,20 @@ import { fileURLToPath } from 'node:url';
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const failures = [];
 const skipDirs = new Set(['node_modules', '.git', '.vercel']);
-
 function walk(dir) {
   const out = [];
   for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
     if (entry.isDirectory() && skipDirs.has(entry.name)) continue;
     const full = path.join(dir, entry.name);
-    if (entry.isDirectory()) out.push(...walk(full));
-    else out.push(full);
+    if (entry.isDirectory()) out.push(...walk(full)); else out.push(full);
   }
   return out;
 }
 const files = walk(root);
-const rel = file => path.relative(root, file).split(path.sep).join('/');
-const ts = files.filter(file => /\.(?:ts|tsx|mts|cts)$/i.test(file));
-if (ts.length) failures.push(`TypeScript runtime/source files found: ${ts.map(rel).join(', ')}`);
-
-const apiFiles = files.filter(file => rel(file).startsWith('api/'));
-if (apiFiles.length !== 1 || rel(apiFiles[0]) !== 'api/index.js') {
-  failures.push(`api/ must contain only api/index.js; found: ${apiFiles.map(rel).join(', ')}`);
-}
-
-const jsFiles = files.filter(file => /\.(?:js|mjs|cjs)$/.test(file));
+const rel = f => path.relative(root, f).split(path.sep).join('/');
+const ts = files.filter(f => /\.(?:ts|tsx|mts|cts)$/i.test(f));
+if (ts.length) failures.push(`TypeScript files found: ${ts.map(rel).join(', ')}`);
+const jsFiles = files.filter(f => /\.(?:js|mjs|cjs)$/.test(f));
 const staticImport = /(?:from\s*|import\s*\()\s*['"]([^'"]+)['"]/g;
 for (const file of jsFiles) {
   const text = fs.readFileSync(file, 'utf8');
@@ -38,27 +30,21 @@ for (const file of jsFiles) {
     if (!fs.existsSync(target)) failures.push(`${rel(file)} -> missing ${spec}`);
   }
 }
-
-const config = JSON.parse(fs.readFileSync(path.join(root, 'vercel.json'), 'utf8'));
-if (config.framework !== null) failures.push('framework must be null (Other).');
-if (config.buildCommand !== 'node scripts/prepare-vercel.mjs') failures.push('buildCommand must clean legacy Functions.');
-if (config.outputDirectory !== 'public') failures.push('outputDirectory must be public.');
-if ('functions' in config) failures.push('Do not use manual functions mapping.');
-const destinations = (config.rewrites || []).map(item => item.destination || '');
-if (!destinations.length || destinations.some(dest => !dest.startsWith('/api/index?__glx_path='))) {
-  failures.push('Every API rewrite must target the single api/index Function.');
-}
-
-for (const required of ['api/index.js','server/healthHandler.js','server/vercelAdapter.js','server/proxyRouter.js','server/lyricsService.js','scripts/prepare-vercel.mjs','public/index.html']) {
-  if (!fs.existsSync(path.join(root, required))) failures.push(`Missing ${required}`);
-}
-
-const packageJson = JSON.parse(fs.readFileSync(path.join(root, 'package.json'), 'utf8'));
-if (packageJson.version !== '2.7.3') failures.push(`Expected version 2.7.3, got ${packageJson.version}`);
-if (packageJson.scripts?.build !== 'node scripts/prepare-vercel.mjs') failures.push('package build script does not run cleanup.');
-
-if (failures.length) {
-  console.error(failures.join('\n'));
-  process.exit(1);
-}
-console.log(`VERCEL_SINGLE_FUNCTION_OUTPUT_OK: api/index.js only; public output ready; ${jsFiles.length} JS modules; zero TypeScript; all relative imports resolved; legacy cleanup enabled`);
+const expectedApi = [
+  'api/index.js','api/health.js','api/proxy/health.js','api/proxy/lyrics/search.js','api/proxy/lyrics/get.js',
+  'api/proxy/lyrics/raw.js','api/proxy/config.js','api/proxy/config/reset.js','api/proxy/samples.js',
+  'api/proxy/logs.js','api/proxy/logs/clear.js','api/proxy/cache/clear.js'
+];
+for (const f of expectedApi) if (!fs.existsSync(path.join(root,f))) failures.push(`Missing compatibility Function ${f}`);
+const config = JSON.parse(fs.readFileSync(path.join(root,'vercel.json'),'utf8'));
+if (config.framework !== null) failures.push('framework must be null');
+if (config.outputDirectory !== 'public') failures.push('outputDirectory must be public');
+if (config.buildCommand !== 'echo GLX_NO_BUILD_REQUIRED') failures.push('buildCommand must be a non-destructive no-op');
+if ('rewrites' in config) failures.push('No rewrites: physical compatibility Functions handle API routes');
+if ('functions' in config) failures.push('No manual functions map');
+const pkg = JSON.parse(fs.readFileSync(path.join(root,'package.json'),'utf8'));
+if (pkg.version !== '2.7.4') failures.push(`Expected 2.7.4, got ${pkg.version}`);
+if (pkg.scripts?.build) failures.push('package.json must not run a destructive build script');
+if (!fs.existsSync(path.join(root,'public/index.html'))) failures.push('Missing public/index.html');
+if (failures.length) { console.error(failures.join('\n')); process.exit(1); }
+console.log(`VERCEL_COMPAT_FUNCTIONS_OK: ${expectedApi.length} API handlers; zero TypeScript; no destructive build; all relative imports resolved`);
