@@ -51,15 +51,11 @@ export async function healthFetch(request) {
             'database',
             ...(config.providers.letrasMusBr.enabled ? ['letras_mus_br'] : []),
             ...(config.providers.vagalume.enabled ? ['vagalume'] : []),
-            ...(config.providers.genius.enabled ? ['genius'] : []),
-            ...(config.providers.customApi.enabled && config.providers.customApi.endpointUrl ? ['customApi'] : []),
         ],
         providerModes: {
             database: 'local',
             letrasMusBr: config.providers.letrasMusBr.enabled ? 'web-glx' : 'disabled',
             vagalume: config.providers.vagalume.enabled ? (config.providers.vagalume.apiKey ? 'api+web-glx-fallback' : 'web-glx') : 'disabled',
-            genius: config.providers.genius.enabled ? (config.providers.genius.accessToken ? 'api+web-glx-fallback' : 'web-search+glx') : 'disabled',
-            customApi: config.providers.customApi.enabled && config.providers.customApi.endpointUrl ? 'custom-api' : 'disabled',
         },
         scraperEngine: {
             name: EXTRACTION_ENGINE_NAME,
@@ -69,7 +65,9 @@ export async function healthFetch(request) {
         capabilities: [
             'vercel-native-functions',
             'lightweight-health-probe',
-            'multi-provider-search',
+            'adaptive-dual-source-search',
+            'letras-primary-title-artist',
+            'vagalume-primary-excerpt',
             ...GLX_CAPABILITIES,
             'bounded-stream-fetch',
             'retry-backoff-jitter',

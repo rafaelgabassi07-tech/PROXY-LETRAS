@@ -244,6 +244,8 @@ export function recordLog(log) {
         status: newLog.status,
         latencyMs: newLog.latencyMs,
         cached: newLog.cached,
+        partial: newLog.partial,
+        resultCount: newLog.resultCount,
         extractionMethod: newLog.extractionMethod,
         error: newLog.error,
     }, 'proxy_request');
@@ -302,8 +304,6 @@ export async function handleApiRequest(url, method, headers, body) {
                         'database',
                         ...(config.providers.letrasMusBr.enabled ? ['letras_mus_br'] : []),
                         ...(config.providers.vagalume.enabled ? ['vagalume'] : []),
-                        ...(config.providers.genius.enabled ? ['genius'] : []),
-                        ...(config.providers.customApi.enabled && config.providers.customApi.endpointUrl ? ['customApi'] : []),
                     ],
                     providerModes: {
                         database: 'local',
@@ -311,10 +311,6 @@ export async function handleApiRequest(url, method, headers, body) {
                         vagalume: config.providers.vagalume.enabled
                             ? (config.providers.vagalume.apiKey ? 'api+web-glx-fallback' : 'web-glx')
                             : 'disabled',
-                        genius: config.providers.genius.enabled
-                            ? (config.providers.genius.accessToken ? 'api+web-glx-fallback' : 'web-search+glx')
-                            : 'disabled',
-                        customApi: config.providers.customApi.enabled && config.providers.customApi.endpointUrl ? 'custom-api' : 'disabled',
                     },
                     scraperEngine: {
                         name: EXTRACTION_ENGINE_NAME,
@@ -322,7 +318,9 @@ export async function handleApiRequest(url, method, headers, body) {
                         parsers: ['parse5', 'htmlparser2', 'structured-json', 'heuristic'],
                     },
                     capabilities: [
-                        'multi-provider-search',
+                        'adaptive-dual-source-search',
+                        'letras-primary-title-artist',
+                        'vagalume-primary-excerpt',
                         ...extractionEngineCapabilities(),
                         'bounded-stream-fetch',
                         'retry-backoff-jitter',
@@ -365,11 +363,14 @@ export async function handleApiRequest(url, method, headers, body) {
                 requestId,
                 queryParam: truncateLogValue({ ...queryParams }),
                 cached: result.cached,
+                partial: result.partial,
+                providersUsed: result.providersUsed,
+                resultCount: result.total,
             });
             return {
                 status: 200,
                 headers: responseHeaders,
-                body: { success: true, query: queryParams, count: result.total, provider: result.provider, cached: result.cached, latencyMs: latency, data: result.results },
+                body: { success: true, query: queryParams, count: result.total, provider: result.provider, providersUsed: result.providersUsed || [], cached: result.cached, partial: Boolean(result.partial), latencyMs: latency, data: result.results },
             };
         }
         if (pathname === '/api/proxy/lyrics/get' && normalizedMethod === 'POST') {

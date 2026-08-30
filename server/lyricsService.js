@@ -1,18 +1,34 @@
 /**
  * Motor de busca e obtenção de letras.
- * Estratégia: banco local + provedores remotos concorrentes, deduplicação,
- * cache limitado e recuperação exata via sourceUrl.
+ * Estratégia: banco local + duas fontes remotas adaptativas (Letras/Vagalume),
+ * cache limitado, fallback sob demanda e recuperação exata via sourceUrl.
  */
 import { LRUCache } from 'lru-cache';
 import { GOSPEL_DATABASE } from './gospelDatabase.js';
 import { getProxyConfig } from './proxyConfig.js';
-import { fetchScrapedSong, fetchVagalumeSong, searchGenius, searchGeniusWeb, searchLetrasMusBr, searchVagalumeExcerpt, searchVagalumeWeb, } from './scrapers.js';
+import { fetchScrapedSong, fetchVagalumeSong, searchLetrasMusBr, searchVagalumeExcerpt, searchVagalumeWeb, } from './scrapers.js';
 const memoryCache = new LRUCache({
     max: 5000,
     ttlAutopurge: true,
     updateAgeOnGet: true,
 });
 const providerHealth = new Map();
+const DEFAULT_SEARCH_BUDGET_MS = 5200;
+const DEFAULT_GET_BUDGET_MS = 8500;
+function searchBudgetMs() {
+    const configured = Number(process.env.LYRICS_SEARCH_BUDGET_MS || DEFAULT_SEARCH_BUDGET_MS);
+    return Math.max(3200, Math.min(Number.isFinite(configured) ? configured : DEFAULT_SEARCH_BUDGET_MS, 9_000));
+}
+function remainingBudget(deadline, maxMs) {
+    const remaining = Math.max(0, deadline - Date.now());
+    if (remaining < 900)
+        return 0;
+    return Math.max(900, Math.min(maxMs, remaining));
+}
+function getBudgetMs() {
+    const configured = Number(process.env.LYRICS_GET_BUDGET_MS || DEFAULT_GET_BUDGET_MS);
+    return Math.max(5000, Math.min(Number.isFinite(configured) ? configured : DEFAULT_GET_BUDGET_MS, 12_000));
+}
 function cacheKey(prefix, value) {
     return `${prefix}:${JSON.stringify(value)}`;
 }
@@ -157,7 +173,7 @@ function enrichSong(song) {
     return {
         ...song,
         fullLyrics,
-        extractionMethod: song.extractionMethod || (song.source === 'database' ? 'database' : (song.source === 'vagalume' || song.source === 'custom_api' ? 'api' : undefined)),
+        extractionMethod: song.extractionMethod || (song.source === 'database' ? 'database' : (song.source === 'vagalume' ? 'api' : undefined)),
         theme: song.theme?.length ? song.theme : (config.filters.autoTagThemes ? detectGospelThemes(fullLyrics) : undefined),
         bibleReferences: song.bibleReferences?.length ? song.bibleReferences : suggestBibleVerses(fullLyrics, song.title),
         sections: song.sections?.length ? song.sections : (config.filters.formatVerses ? structureLyricsSections(fullLyrics) : undefined),
@@ -258,9 +274,9 @@ function likelyLyricsExcerpt(params) {
     const normalized = normalizeText(params.query || '');
     const words = normalized.split(/\s+/).filter(Boolean);
     const terms = searchTerms(params.query || '');
-    // Trechos lembrados pelo usuário costumam ser curtos. O modo híbrido entra cedo o suficiente
-    // para validar frases como "muda minha história" sem impedir títulos de 3–4 palavras.
-    return words.length >= 4 || terms.length >= 4 || (words.length >= 3 && normalized.length >= 17);
+    // Com uma caixa única, 2–4 palavras ainda são frequentemente título ou artista. Só priorizamos
+    // o índice full-text quando há sinal claro de frase; casos ambíguos continuam cobertos pelo fallback.
+    return words.length >= 5 || terms.length >= 5 || (words.length >= 4 && normalized.length >= 26);
 }
 function buildRemoteQueries(params) {
     const rawQuery = String(params.query || params.title || '').replace(/\s+/g, ' ').trim();
@@ -472,49 +488,6 @@ function lyricsMatchQuality(lyrics, query) {
     const matched = best.exactPhrase || (best.coverage >= termThreshold && best.orderedCoverage >= Math.max(0.55, termThreshold - 0.08));
     return { ...best, matched };
 }
-function matchingLyricsPreview(lyrics, query) {
-    return lyricsMatchQuality(lyrics, query).preview;
-}
-function providerTimeoutMs(config, source) {
-    if (source === 'genius') return config.providers.genius.timeoutMs;
-    if (source === 'vagalume') return config.providers.vagalume.timeoutMs;
-    return config.providers.letrasMusBr.timeoutMs;
-}
-
-async function enrichTopResultMetadata(results, config) {
-    const eligible = results
-        .map((result, index) => ({ result, index }))
-        .filter(({ result }) => !result.imageUrl && result.sourceUrl && ['genius', 'letras_mus_br', 'vagalume'].includes(result.source))
-        .slice(0, 2);
-    if (!eligible.length) return results;
-    const enriched = [...results];
-    const settled = await Promise.allSettled(eligible.map(async ({ result, index }) => {
-        let song = getFromCache(sourceLyricsCacheKey(result.sourceUrl));
-        if (!song) {
-            const timeout = Math.min(providerTimeoutMs(config, result.source), 3200);
-            song = await fetchScrapedSong(result.sourceUrl, result.source, timeout);
-            if (song) setInCache(sourceLyricsCacheKey(result.sourceUrl), enrichSong(song), 'lyrics');
-        }
-        if (!song) return null;
-        return {
-            index,
-            patch: {
-                imageUrl: result.imageUrl || song.imageUrl,
-                album: result.album || song.album,
-                preview: isGenericPreview(result.preview)
-                    ? (matchingLyricsPreview(song.fullLyrics, result.title) || result.preview)
-                    : result.preview,
-            },
-        };
-    }));
-    for (const outcome of settled) {
-        if (outcome.status !== 'fulfilled' || !outcome.value) continue;
-        const { index, patch } = outcome.value;
-        enriched[index] = { ...enriched[index], ...patch };
-    }
-    return enriched;
-}
-
 function sameSongConfidence(reference, candidate) {
     const titleSimilarity = diceSimilarity(reference.title || '', candidate.title || '');
     const artistSimilarity = diceSimilarity(reference.artist || '', candidate.artist || '');
@@ -534,162 +507,8 @@ function songMatchesRequest(song, request) {
     if (expectedArtist) return diceSimilarity(song.artist || '', request.artist || '') >= 0.58;
     return true;
 }
-async function resolveVagalumeCandidateUrls(results, config, maxCandidates = 5) {
-    const unresolved = results
-        .map((result, index) => ({ result, index }))
-        .filter(({ result }) => result.source === 'vagalume' && !result.sourceUrl && result.title && result.artist)
-        .slice(0, maxCandidates);
-    if (!unresolved.length) return results;
-    const resolved = [...results];
-    const settled = await Promise.allSettled(unresolved.map(async ({ result, index }) => {
-        const matches = await searchVagalumeWeb(
-            config.providers.vagalume.webBaseUrl,
-            result.title,
-            result.artist,
-            8,
-            Math.min(config.providers.vagalume.timeoutMs, 3200)
-        );
-        const best = matches
-            .map(candidate => ({ candidate, confidence: sameSongConfidence(result, candidate) }))
-            .filter(item => item.candidate.sourceUrl && item.confidence >= 0.72)
-            .sort((a, b) => b.confidence - a.confidence)[0]?.candidate;
-        return best ? { index, best } : null;
-    }));
-    for (const outcome of settled) {
-        if (outcome.status !== 'fulfilled' || !outcome.value) continue;
-        const { index, best } = outcome.value;
-        resolved[index] = {
-            ...resolved[index],
-            sourceUrl: best.sourceUrl,
-            imageUrl: resolved[index].imageUrl || best.imageUrl,
-            album: resolved[index].album || best.album,
-            preview: isGenericPreview(resolved[index].preview) ? best.preview : resolved[index].preview,
-        };
-    }
-    return resolved;
-}
-async function fanOutResolvedSongs(results, params, config) {
-    const excerptMode = likelyLyricsExcerpt(params);
-    const seeds = results
-        .filter(result => result.title && result.artist && (result.lyricsVerified || resultIntentScore(result, params) >= (excerptMode ? 72 : 108)))
-        .sort((a, b) => resultIntentScore(b, params) - resultIntentScore(a, params))
-        .slice(0, excerptMode ? 2 : 1);
-    if (!seeds.length) return results;
-    const providerBudget = 2600;
-    const seedRuns = await Promise.allSettled(seeds.map(async seed => {
-        const exactQuery = `${seed.artist} ${seed.title}`.trim();
-        const jobs = [];
-        if (seed.source !== 'letras_mus_br' && config.providers.letrasMusBr.enabled && providerAvailable('letras_mus_br')) {
-            jobs.push(searchLetrasMusBr(config.providers.letrasMusBr.baseUrl, exactQuery, 5, Math.min(config.providers.letrasMusBr.timeoutMs, providerBudget)));
-        }
-        if (seed.source !== 'genius' && config.providers.genius.enabled && providerAvailable('genius')) {
-            jobs.push((async () => {
-                if (config.providers.genius.accessToken) {
-                    try {
-                        const api = await searchGenius(config.providers.genius.baseUrl, config.providers.genius.accessToken, exactQuery, 5, Math.min(config.providers.genius.timeoutMs, providerBudget));
-                        if (api.length) return api;
-                    } catch { /* web fallback */ }
-                }
-                return searchGeniusWeb(config.providers.genius.webBaseUrl, exactQuery, 5, Math.min(config.providers.genius.timeoutMs, providerBudget));
-            })());
-        }
-        if (seed.source !== 'vagalume' && config.providers.vagalume.enabled && providerAvailable('vagalume')) {
-            jobs.push((async () => {
-                let indexed = [];
-                try {
-                    indexed = await searchVagalumeExcerpt(config.providers.vagalume.baseUrl, config.providers.vagalume.webBaseUrl, exactQuery, 5, Math.min(config.providers.vagalume.timeoutMs, providerBudget));
-                } catch { /* web fallback */ }
-                const resolvedIndexed = await resolveVagalumeCandidateUrls(indexed, config, 2);
-                if (resolvedIndexed.some(item => item.sourceUrl)) return resolvedIndexed;
-                return searchVagalumeWeb(config.providers.vagalume.webBaseUrl, seed.title, seed.artist, 5, Math.min(config.providers.vagalume.timeoutMs, providerBudget));
-            })());
-        }
-        const settled = await Promise.allSettled(jobs);
-        const additions = [];
-        for (const outcome of settled) {
-            if (outcome.status !== 'fulfilled') continue;
-            const matches = outcome.value
-                .map(candidate => ({ candidate, confidence: sameSongConfidence(seed, candidate) }))
-                .filter(item => item.confidence >= 0.72)
-                .sort((a, b) => b.confidence - a.confidence)
-                .slice(0, 2)
-                .map(item => item.candidate);
-            additions.push(...matches);
-        }
-        return additions;
-    }));
-    const additions = seedRuns.flatMap(outcome => outcome.status === 'fulfilled' ? outcome.value : []);
-    return [...results, ...additions];
-}
-async function verifyExcerptCandidates(results, params, config) {
-    if (!likelyLyricsExcerpt(params) || !params.query)
-        return results;
-    const terms = searchTerms(params.query);
-    if (terms.length < 2)
-        return results;
-    // O índice Vagalume retorna id/título/artista, mas não garante uma URL web canônica sem chave.
-    // Resolve a URL pela página real do artista antes de tentar validar a letra.
-    const resolvableResults = await resolveVagalumeCandidateUrls(results, config, 5);
-    const perProvider = new Map();
-    const candidates = [...resolvableResults]
-        .filter(result => result.sourceUrl && ['genius', 'letras_mus_br', 'vagalume'].includes(result.source))
-        .sort((a, b) => resultIntentScore(b, params) - resultIntentScore(a, params))
-        .filter(result => {
-            const count = perProvider.get(result.source) || 0;
-            if (count >= 3)
-                return false;
-            perProvider.set(result.source, count + 1);
-            return true;
-        })
-        .slice(0, 8);
-    const validations = await Promise.allSettled(candidates.map(async result => {
-        let song = getFromCache(sourceLyricsCacheKey(result.sourceUrl));
-        if (!song) {
-            const timeout = result.source === 'genius'
-                ? config.providers.genius.timeoutMs
-                : result.source === 'vagalume'
-                    ? config.providers.vagalume.timeoutMs
-                    : config.providers.letrasMusBr.timeoutMs;
-            song = await fetchScrapedSong(result.sourceUrl, result.source, Math.min(timeout, 3800));
-            if (song)
-                setInCache(sourceLyricsCacheKey(result.sourceUrl), enrichSong(song), 'lyrics');
-        }
-        if (!song?.fullLyrics)
-            return null;
-        const matchQuality = lyricsMatchQuality(song.fullLyrics, params.query);
-        if (!matchQuality.matched)
-            return null;
-        return {
-            id: result.id,
-            sourceUrl: result.sourceUrl,
-            preview: matchQuality.preview,
-            album: song.album,
-            imageUrl: song.imageUrl,
-            lyricsVerified: true,
-            scoreBonus: matchQuality.exactPhrase ? 150 : Math.round(95 * Math.min(1, matchQuality.coverage * 0.65 + matchQuality.orderedCoverage * 0.35)),
-        };
-    }));
-    const verified = new Map();
-    validations.forEach(outcome => {
-        if (outcome.status === 'fulfilled' && outcome.value)
-            verified.set(`${outcome.value.id}|${outcome.value.sourceUrl}`, outcome.value);
-    });
-    return resolvableResults.map(result => {
-        const match = verified.get(`${result.id}|${result.sourceUrl}`);
-        if (!match)
-            return result;
-        return {
-            ...result,
-            preview: match.preview || result.preview,
-            album: result.album || match.album,
-            imageUrl: result.imageUrl || match.imageUrl,
-            lyricsVerified: true,
-            score: (Number(result.score) || 0) + match.scoreBonus,
-        };
-    }).filter(result => !result.discoveryOnly || result.lyricsVerified);
-}
-async function searchVariants(variants, limit, runner) {
-    const requested = variants.slice(0, 4);
+async function searchVariants(variants, limit, runner, maxVariants = 3) {
+    const requested = variants.slice(0, Math.max(1, Math.min(maxVariants, 4)));
     if (!requested.length) return [];
     // As variantes são independentes. Executá-las em paralelo mantém o tempo máximo do provider
     // próximo de um único timeout, em vez de somar 3–4 timeouts quando uma fonte está lenta.
@@ -718,95 +537,8 @@ async function searchVariants(variants, limit, runner) {
 function remoteQuery(params) {
     return [params.artist, params.title, params.query].filter(Boolean).join(' ').replace(/\s+/g, ' ').trim();
 }
-async function customSearch(params, limit) {
-    const config = getProxyConfig().providers.customApi;
-    if (!config.enabled || !config.endpointUrl)
-        return [];
-    const headers = { 'Content-Type': 'application/json', ...(config.customHeaders || {}) };
-    if (config.authHeader)
-        headers.Authorization = config.authHeader;
-    let url = config.endpointUrl;
-    const init = { method: config.method, headers, signal: AbortSignal.timeout(6500) };
-    if (config.method === 'GET') {
-        const parsed = new URL(url);
-        parsed.searchParams.set('query', params.query || '');
-        if (params.artist)
-            parsed.searchParams.set('artist', params.artist);
-        if (params.title)
-            parsed.searchParams.set('title', params.title);
-        parsed.searchParams.set('limit', String(limit));
-        url = parsed.toString();
-    }
-    else {
-        init.body = JSON.stringify({ action: 'search', ...params, limit });
-    }
-    const response = await fetch(url, init);
-    if (!response.ok)
-        throw new Error(`Custom API HTTP ${response.status}`);
-    const payload = await response.json();
-    const array = payload?.data?.results || payload?.results || payload?.data || [];
-    if (!Array.isArray(array))
-        return [];
-    return array.slice(0, limit).map((item, index) => ({
-        id: String(item.id || `custom-${index}-${Date.now()}`),
-        title: String(item.title || item.name || ''),
-        artist: String(item.artist || item.author || 'Artista'),
-        album: typeof item.album === 'string' ? item.album : undefined,
-        imageUrl: typeof item.imageUrl === 'string' ? item.imageUrl : (typeof item.image === 'string' ? item.image : undefined),
-        preview: String(item.preview || 'Resultado da API personalizada'),
-        theme: Array.isArray(item.theme) ? item.theme.map(String) : undefined,
-        source: 'custom_api',
-        sourceUrl: typeof item.sourceUrl === 'string' ? item.sourceUrl : undefined,
-        providerRef: item.providerRef != null ? String(item.providerRef) : undefined,
-        score: Number.isFinite(Number(item.score)) ? Number(item.score) : 55 - index,
-    }));
-}
-async function customGet(params) {
-    const config = getProxyConfig().providers.customApi;
-    if (!config.enabled || !config.endpointUrl)
-        return null;
-    const headers = { 'Content-Type': 'application/json', ...(config.customHeaders || {}) };
-    if (config.authHeader)
-        headers.Authorization = config.authHeader;
-    let url = config.endpointUrl;
-    const init = { method: config.method, headers, signal: AbortSignal.timeout(6500) };
-    if (config.method === 'GET') {
-        const parsed = new URL(url);
-        for (const [key, value] of Object.entries(params))
-            if (value)
-                parsed.searchParams.set(key, String(value));
-        url = parsed.toString();
-    }
-    else {
-        init.body = JSON.stringify({ action: 'get', ...params });
-    }
-    const response = await fetch(url, init);
-    if (!response.ok)
-        return null;
-    const payload = await response.json();
-    const data = payload?.data?.song || payload?.song || payload?.data || payload;
-    const lyrics = data?.fullLyrics || data?.lyrics || readPath(payload, config.responsePath || '');
-    if (typeof lyrics !== 'string' || !lyrics.trim())
-        return null;
-    return enrichSong({
-        id: String(data?.id || params.id || `custom-${Date.now()}`),
-        title: String(data?.title || params.title || 'Música'),
-        artist: String(data?.artist || params.artist || 'Artista'),
-        album: typeof data?.album === 'string' ? data.album : undefined,
-        imageUrl: typeof data?.imageUrl === 'string' ? data.imageUrl : (typeof data?.image === 'string' ? data.image : undefined),
-        fullLyrics: lyrics,
-        source: 'custom_api',
-        sourceUrl: typeof data?.sourceUrl === 'string' ? data.sourceUrl : params.sourceUrl,
-        extractionMethod: 'api',
-        fetchedAt: new Date().toISOString(),
-    });
-}
-function readPath(source, path) {
-    if (!path)
-        return undefined;
-    return path.split('.').filter(Boolean).reduce((value, key) => value?.[key], source);
-}
 export async function searchGospelSongs(params) {
+    const startedAt = Date.now();
     const limit = Math.max(1, Math.min(Number(params.limit) || 12, 25));
     const normalizedParams = {
         query: String(params.query || '').trim().slice(0, 160),
@@ -816,105 +548,139 @@ export async function searchGospelSongs(params) {
         provider: String(params.provider || '').trim(),
         limit,
     };
-    const key = cacheKey('search-v4', normalizedParams);
+    const key = cacheKey('search-v6-dual', normalizedParams);
     const cached = getFromCache(key);
     if (cached)
         return { ...cached, cached: true };
+
     const config = getProxyConfig();
-    const desiredProvider = normalizedParams.provider || config.defaultProvider;
+    const requestedProvider = normalizedParams.provider || config.defaultProvider;
+    const desiredProvider = ['built-in', 'database', 'letras_mus_br', 'vagalume'].includes(requestedProvider)
+        ? requestedProvider
+        : 'multi-provider';
     const localAllowed = desiredProvider === 'multi-provider' || desiredProvider === 'built-in' || desiredProvider === 'database';
     const results = localAllowed ? localSearch(normalizedParams, limit) : [];
     const query = remoteQuery(normalizedParams);
     const queryVariants = buildRemoteQueries(normalizedParams);
+    const excerptMode = likelyLyricsExcerpt(normalizedParams);
+    const deadline = startedAt + searchBudgetMs();
+    let partial = false;
+    const providersUsed = [];
+
+    const excerptCandidateMatches = (result) => {
+        if (!excerptMode || !normalizedParams.query)
+            return true;
+        if (!isGenericPreview(result.preview)) {
+            const quality = lyricsMatchQuality(result.preview, normalizedParams.query);
+            if (quality.matched || quality.exactPhrase || quality.coverage >= 0.72)
+                return true;
+        }
+        // Se a consulta longa for, na prática, o título completo, preserva um resultado forte do Letras.
+        return diceSimilarity(result.title || '', normalizedParams.query) >= 0.76 ||
+            tokenCoverage(result.title || '', searchTerms(normalizedParams.query)) >= 0.86;
+    };
+
+    const strongEnough = (batch) => batch.some(result => {
+        if (excerptMode)
+            return excerptCandidateMatches(result);
+        return resultIntentScore(result, normalizedParams) >= 78;
+    });
+
+    const runLetras = async (budgetMs) => {
+        if (!budgetMs || !config.providers.letrasMusBr.enabled || !providerAvailable('letras_mus_br'))
+            return [];
+        return searchVariants(
+            queryVariants,
+            limit,
+            (variant, variantLimit) => searchLetrasMusBr(
+                config.providers.letrasMusBr.baseUrl,
+                variant,
+                variantLimit,
+                Math.min(config.providers.letrasMusBr.timeoutMs, budgetMs)
+            ),
+            excerptMode ? 1 : 2
+        );
+    };
+
+    const runVagalume = async (budgetMs) => {
+        if (!budgetMs || !config.providers.vagalume.enabled || !providerAvailable('vagalume'))
+            return [];
+        const providerDeadline = Date.now() + budgetMs;
+        const primaryQuery = queryVariants[0] || query;
+        if (!primaryQuery)
+            return [];
+        try {
+            const indexBudget = remainingBudget(providerDeadline, Math.min(2300, budgetMs));
+            if (indexBudget) {
+                const indexed = await searchVagalumeExcerpt(
+                    config.providers.vagalume.baseUrl,
+                    config.providers.vagalume.webBaseUrl,
+                    primaryQuery,
+                    limit,
+                    Math.min(config.providers.vagalume.timeoutMs, indexBudget)
+                );
+                if (indexed.length)
+                    return indexed;
+            }
+        }
+        catch {
+            // O índice é a rota mais barata. Se indisponível, usa uma única descoberta web.
+        }
+        const webBudget = remainingBudget(providerDeadline, 1900);
+        if (!webBudget)
+            return [];
+        return searchVagalumeWeb(
+            config.providers.vagalume.webBaseUrl,
+            normalizedParams.title || normalizedParams.query || query,
+            normalizedParams.artist,
+            limit,
+            Math.min(config.providers.vagalume.timeoutMs, webBudget)
+        );
+    };
+
     if (query && desiredProvider !== 'built-in' && desiredProvider !== 'database') {
-        const jobs = [];
-        const allow = (provider) => desiredProvider === 'multi-provider' || desiredProvider === provider;
-        if (allow('letras_mus_br') && config.providers.letrasMusBr.enabled && providerAvailable('letras_mus_br')) {
-            jobs.push({
-                name: 'letras_mus_br',
-                run: () => searchVariants(queryVariants, limit, (variant, variantLimit) => searchLetrasMusBr(config.providers.letrasMusBr.baseUrl, variant, variantLimit, config.providers.letrasMusBr.timeoutMs)),
-            });
-        }
-        if (allow('genius') && config.providers.genius.enabled && providerAvailable('genius')) {
-            jobs.push({
-                name: 'genius',
-                run: async () => searchVariants(queryVariants, limit, async (variant, variantLimit) => {
-                    if (config.providers.genius.accessToken) {
-                        try {
-                            const apiResults = await searchGenius(config.providers.genius.baseUrl, config.providers.genius.accessToken, variant, variantLimit, config.providers.genius.timeoutMs);
-                            if (apiResults.length)
-                                return apiResults;
-                        }
-                        catch { /* fallback web abaixo */ }
-                    }
-                    return searchGeniusWeb(config.providers.genius.webBaseUrl, variant, variantLimit, config.providers.genius.timeoutMs);
-                }),
-            });
-        }
-        if (allow('custom') && config.providers.customApi.enabled && providerAvailable('custom')) {
-            jobs.push({ name: 'custom', run: () => customSearch(normalizedParams, limit) });
-        }
-        if (allow('vagalume') && config.providers.vagalume.enabled && providerAvailable('vagalume')) {
-            jobs.push({
-                name: 'vagalume',
-                run: async () => {
-                    const titleQuery = normalizedParams.title || normalizedParams.query;
-                    if (config.providers.vagalume.apiKey && normalizedParams.artist && titleQuery) {
-                        try {
-                            const song = await fetchVagalumeSong(config.providers.vagalume.baseUrl, config.providers.vagalume.apiKey, normalizedParams.artist, titleQuery, config.providers.vagalume.timeoutMs);
-                            if (song) {
-                                const enriched = enrichSong(song);
-                                setInCache(cacheKey('lyrics-v2', { artist: song.artist, title: song.title, source: 'vagalume' }), enriched, 'lyrics');
-                                return [{
-                                        id: song.id,
-                                        title: song.title,
-                                        artist: song.artist,
-                                        album: song.album,
-                                        imageUrl: song.imageUrl,
-                                        preview: 'Resultado confirmado pela API Vagalume',
-                                        source: song.source,
-                                        sourceUrl: song.sourceUrl,
-                                        score: 94,
-                                    }];
-                            }
-                        }
-                        catch { /* fallback web abaixo */ }
-                    }
-                    const indexed = await searchVariants(queryVariants, limit, (variant, variantLimit) => searchVagalumeExcerpt(config.providers.vagalume.baseUrl, config.providers.vagalume.webBaseUrl, variant, variantLimit, config.providers.vagalume.timeoutMs));
-                    if (indexed.length)
-                        return indexed;
-                    return searchVariants(queryVariants.length ? queryVariants : [titleQuery || query], limit, (variant, variantLimit) => searchVagalumeWeb(config.providers.vagalume.webBaseUrl, variant, normalizedParams.artist, variantLimit, config.providers.vagalume.timeoutMs));
-                },
-            });
-        }
-        const settled = await Promise.allSettled(jobs.map(job => job.run()));
-        settled.forEach((outcome, index) => {
-            const name = jobs[index]?.name || 'unknown';
-            if (outcome.status === 'fulfilled') {
-                providerSucceeded(name);
-                results.push(...outcome.value);
+        // Fluxo adaptativo de duas fontes:
+        // - título/artista: Letras primeiro;
+        // - trecho: índice full-text do Vagalume primeiro;
+        // O segundo provedor só é consultado se o primeiro não produzir um candidato forte.
+        const providerPlan = desiredProvider === 'multi-provider'
+            ? (excerptMode ? ['vagalume', 'letras_mus_br'] : ['letras_mus_br', 'vagalume'])
+            : [desiredProvider];
+
+        for (const provider of providerPlan) {
+            const budgetMs = remainingBudget(deadline, provider === providerPlan[0] ? 2900 : 1900);
+            if (!budgetMs) {
+                partial = true;
+                break;
             }
-            else {
-                providerFailed(name);
+            try {
+                let batch = provider === 'vagalume'
+                    ? await runVagalume(budgetMs)
+                    : await runLetras(budgetMs);
+                if (excerptMode)
+                    batch = batch.filter(excerptCandidateMatches).map(result => ({ ...result, lyricsVerified: true }));
+                providerSucceeded(provider);
+                providersUsed.push(provider);
+                results.push(...batch);
+                if (desiredProvider === 'multi-provider' && strongEnough(batch))
+                    break;
             }
-        });
+            catch {
+                providerFailed(provider);
+                providersUsed.push(provider);
+                partial = true;
+            }
+        }
     }
-    // Em título/artista, resolve de imediato URLs Vagalume para que a lista abra a música certa.
-    // Em trecho, verifyExcerptCandidates já faz essa resolução antes de validar o texto, evitando
-    // repetir a mesma rodada de rede.
-    const canonicalResults = likelyLyricsExcerpt(normalizedParams)
-        ? results
-        : await resolveVagalumeCandidateUrls(results, config, 4);
-    const verifiedResults = await verifyExcerptCandidates(canonicalResults, normalizedParams, config);
-    // Quando qualquer fonte identifica a música (especialmente por trecho), usa título+artista
-    // resolvidos para consultar as demais fontes e fundir capas/álbum/URLs canônicas.
-    const federatedResults = await fanOutResolvedSongs(verifiedResults, normalizedParams, config);
-    const merged = dedupeResults(federatedResults, normalizedParams, limit);
-    const enrichedResults = await enrichTopResultMetadata(merged, config);
+
+    const merged = dedupeResults(results, normalizedParams, limit);
     const response = {
-        results: enrichedResults,
-        total: enrichedResults.length,
-        provider: desiredProvider === 'multi-provider' ? 'multi-provider' : desiredProvider,
+        results: merged,
+        total: merged.length,
+        provider: desiredProvider === 'multi-provider' ? 'dual-source' : desiredProvider,
+        providersUsed,
+        partial,
+        durationMs: Date.now() - startedAt,
     };
     setInCache(key, response, 'search');
     return { ...response, cached: false };
@@ -948,7 +714,7 @@ export async function getGospelSongLyrics(params) {
         sourceUrl: params.sourceUrl?.trim().slice(0, 1200),
         providerRef: params.providerRef?.trim().slice(0, 200),
     };
-    const key = cacheKey('lyrics-v2', normalized);
+    const key = cacheKey('lyrics-v3-dual', normalized);
     const cached = getFromCache(key);
     if (cached)
         return { song: cached, provider: cached.source, cached: true };
@@ -959,173 +725,179 @@ export async function getGospelSongLyrics(params) {
             return { song: sourceCached, provider: sourceCached.source, cached: true };
         }
     }
+
     const config = getProxyConfig();
     const requestedProvider = normalized.provider || config.defaultProvider;
-    const desiredProvider = requestedProvider === 'custom_api' ? 'custom' : requestedProvider;
+    const desiredProvider = ['built-in', 'database', 'letras_mus_br', 'vagalume'].includes(requestedProvider)
+        ? requestedProvider
+        : 'multi-provider';
     const exactLocal = localSong(normalized);
     if (exactLocal && (desiredProvider === 'multi-provider' || desiredProvider === 'built-in' || desiredProvider === 'database' || !normalized.sourceUrl)) {
         const song = enrichSong(exactLocal);
         setInCache(key, song, 'lyrics');
         return { song, provider: 'database', cached: false };
     }
-    if (normalized.sourceUrl && ['genius', 'letras_mus_br', 'vagalume'].includes(desiredProvider)) {
-        const source = desiredProvider === 'genius' || normalized.sourceUrl.includes('genius.com')
-            ? 'genius'
-            : desiredProvider === 'vagalume' || normalized.sourceUrl.includes('vagalume.com.br')
-                ? 'vagalume'
-                : 'letras_mus_br';
-        try {
-            const timeout = source === 'genius'
-                ? config.providers.genius.timeoutMs
-                : source === 'vagalume'
-                    ? config.providers.vagalume.timeoutMs
-                    : config.providers.letrasMusBr.timeoutMs;
-            const scraped = await fetchScrapedSong(normalized.sourceUrl, source, timeout);
-            if (scraped && songMatchesRequest(scraped, normalized)) {
-                const song = enrichSong({
-                    ...scraped,
-                    title: normalized.title || scraped.title,
-                    artist: normalized.artist || scraped.artist,
-                });
-                setInCache(key, song, 'lyrics');
-                if (song.sourceUrl) setInCache(sourceLyricsCacheKey(song.sourceUrl), song, 'lyrics');
-                providerSucceeded(source);
-                return { song, provider: source, cached: false };
+    if (desiredProvider === 'built-in' || desiredProvider === 'database')
+        return { song: null, provider: desiredProvider, cached: false };
+
+    const deadline = Date.now() + getBudgetMs();
+    const saveSong = (rawSong, provider, overrideIdentity = true) => {
+        const song = enrichSong(overrideIdentity ? {
+            ...rawSong,
+            title: normalized.title || rawSong.title,
+            artist: normalized.artist || rawSong.artist,
+        } : rawSong);
+        setInCache(key, song, 'lyrics');
+        if (song.sourceUrl)
+            setInCache(sourceLyricsCacheKey(song.sourceUrl), song, 'lyrics');
+        providerSucceeded(provider);
+        return { song, provider, cached: false };
+    };
+
+    // Primeiro tenta exatamente a URL entregue pela pesquisa. Links antigos de Genius/custom
+    // não são mais acessados; título+artista são recuperados pelas duas fontes ativas.
+    if (normalized.sourceUrl) {
+        const directSource = normalized.sourceUrl.includes('vagalume.com.br')
+            ? 'vagalume'
+            : (normalized.sourceUrl.includes('letras.mus.br') || normalized.sourceUrl.includes('letras.com'))
+                ? 'letras_mus_br'
+                : null;
+        if (directSource) {
+            try {
+                const directBudget = remainingBudget(deadline, 3300);
+                if (directBudget) {
+                    const timeout = directSource === 'vagalume'
+                        ? config.providers.vagalume.timeoutMs
+                        : config.providers.letrasMusBr.timeoutMs;
+                    const scraped = await fetchScrapedSong(normalized.sourceUrl, directSource, Math.min(timeout, directBudget));
+                    if (scraped && songMatchesRequest(scraped, normalized))
+                        return saveSong(scraped, directSource);
+                }
+            }
+            catch {
+                providerFailed(directSource);
             }
         }
-        catch {
-            providerFailed(source);
-        }
     }
-    // Um resultado representa a música, não a disponibilidade eterna de uma única fonte.
-    // Se a fonte clicada falhar, usa título+artista para recuperar a mesma música nas demais.
-    const allowCrossProviderFallback = Boolean(
-        normalized.artist && normalized.title && ['multi-provider', 'vagalume', 'genius', 'letras_mus_br'].includes(desiredProvider)
-    );
-    if ((desiredProvider === 'multi-provider' || desiredProvider === 'vagalume' || allowCrossProviderFallback) &&
-        config.providers.vagalume.enabled && normalized.artist && normalized.title) {
+
+    const query = [normalized.artist, normalized.title].filter(Boolean).join(' ').trim();
+    if (!query)
+        return { song: null, provider: desiredProvider, cached: false };
+
+    const lookupLetras = async (budgetMs) => {
+        if (!budgetMs || !config.providers.letrasMusBr.enabled || !providerAvailable('letras_mus_br'))
+            return null;
+        const providerDeadline = Date.now() + budgetMs;
+        const searchBudget = remainingBudget(providerDeadline, 2100);
+        if (!searchBudget)
+            return null;
+        const matches = await searchLetrasMusBr(
+            config.providers.letrasMusBr.baseUrl,
+            query,
+            5,
+            Math.min(config.providers.letrasMusBr.timeoutMs, searchBudget)
+        );
+        const candidates = matches
+            .filter(match => match.sourceUrl)
+            .map(match => ({ match, confidence: sameSongConfidence(normalized, match) }))
+            .sort((a, b) => b.confidence - a.confidence)
+            .slice(0, 2);
+        for (const { match, confidence } of candidates) {
+            if (confidence < 0.54)
+                continue;
+            const fetchBudget = remainingBudget(providerDeadline, 2300);
+            if (!fetchBudget)
+                break;
+            try {
+                const scraped = await fetchScrapedSong(
+                    match.sourceUrl,
+                    'letras_mus_br',
+                    Math.min(config.providers.letrasMusBr.timeoutMs, fetchBudget)
+                );
+                if (scraped && songMatchesRequest(scraped, normalized))
+                    return scraped;
+            }
+            catch { /* tenta o próximo candidato */ }
+        }
+        return null;
+    };
+
+    const lookupVagalume = async (budgetMs) => {
+        if (!budgetMs || !config.providers.vagalume.enabled || !providerAvailable('vagalume') || !normalized.artist || !normalized.title)
+            return null;
+        const providerDeadline = Date.now() + budgetMs;
         if (config.providers.vagalume.apiKey) {
             try {
-                const fetched = await fetchVagalumeSong(config.providers.vagalume.baseUrl, config.providers.vagalume.apiKey, normalized.artist, normalized.title, config.providers.vagalume.timeoutMs);
-                if (fetched && songMatchesRequest(fetched, normalized)) {
-                    const song = enrichSong(fetched);
-                    setInCache(key, song, 'lyrics');
-                    if (song.sourceUrl) setInCache(sourceLyricsCacheKey(song.sourceUrl), song, 'lyrics');
-                    providerSucceeded('vagalume');
-                    return { song, provider: 'vagalume', cached: false };
+                const apiBudget = remainingBudget(providerDeadline, 2200);
+                if (apiBudget) {
+                    const fetched = await fetchVagalumeSong(
+                        config.providers.vagalume.baseUrl,
+                        config.providers.vagalume.apiKey,
+                        normalized.artist,
+                        normalized.title,
+                        Math.min(config.providers.vagalume.timeoutMs, apiBudget)
+                    );
+                    if (fetched && songMatchesRequest(fetched, normalized))
+                        return fetched;
                 }
             }
-            catch { /* fallback web abaixo */ }
+            catch { /* descoberta web abaixo */ }
         }
-        try {
-            let indexedMatches = [];
+        const webBudget = remainingBudget(providerDeadline, 2100);
+        if (!webBudget)
+            return null;
+        const matches = await searchVagalumeWeb(
+            config.providers.vagalume.webBaseUrl,
+            normalized.title,
+            normalized.artist,
+            6,
+            Math.min(config.providers.vagalume.timeoutMs, webBudget)
+        );
+        const candidates = matches
+            .filter(match => match.sourceUrl)
+            .map(match => ({ match, confidence: sameSongConfidence(normalized, match) }))
+            .sort((a, b) => b.confidence - a.confidence)
+            .slice(0, 2);
+        for (const { match, confidence } of candidates) {
+            if (confidence < 0.54)
+                continue;
+            const fetchBudget = remainingBudget(providerDeadline, 2300);
+            if (!fetchBudget)
+                break;
             try {
-                indexedMatches = await searchVagalumeExcerpt(config.providers.vagalume.baseUrl, config.providers.vagalume.webBaseUrl, `${normalized.artist} ${normalized.title}`.trim(), 4, config.providers.vagalume.timeoutMs);
+                const scraped = await fetchScrapedSong(
+                    match.sourceUrl,
+                    'vagalume',
+                    Math.min(config.providers.vagalume.timeoutMs, fetchBudget)
+                );
+                if (scraped && songMatchesRequest(scraped, normalized))
+                    return scraped;
             }
-            catch { /* o índice sem chave é opcional; a página web continua disponível */ }
-            // O índice fornece metadados muito bons, mas o slug derivado nem sempre é a URL canônica.
-            // Cada candidato é validado individualmente; uma URL inválida não cancela o provider inteiro.
-            for (const match of indexedMatches) {
-                if (!match.sourceUrl)
-                    continue;
-                try {
-                    const scraped = await fetchScrapedSong(match.sourceUrl, 'vagalume', config.providers.vagalume.timeoutMs);
-                    if (scraped && songMatchesRequest(scraped, normalized)) {
-                        const song = enrichSong({ ...scraped, title: normalized.title || scraped.title, artist: normalized.artist || scraped.artist });
-                        setInCache(key, song, 'lyrics');
-                        if (song.sourceUrl) setInCache(sourceLyricsCacheKey(song.sourceUrl), song, 'lyrics');
-                        providerSucceeded('vagalume');
-                        return { song, provider: 'vagalume', cached: false };
-                    }
-                }
-                catch { /* tenta o próximo índice e depois a descoberta web canônica */ }
-            }
-            const webMatches = await searchVagalumeWeb(config.providers.vagalume.webBaseUrl, normalized.title, normalized.artist, 6, config.providers.vagalume.timeoutMs);
-            for (const match of webMatches) {
-                if (!match.sourceUrl)
-                    continue;
-                try {
-                    const scraped = await fetchScrapedSong(match.sourceUrl, 'vagalume', config.providers.vagalume.timeoutMs);
-                    if (scraped && songMatchesRequest(scraped, normalized)) {
-                        const song = enrichSong({ ...scraped, title: normalized.title || scraped.title, artist: normalized.artist || scraped.artist });
-                        setInCache(key, song, 'lyrics');
-                        if (song.sourceUrl) setInCache(sourceLyricsCacheKey(song.sourceUrl), song, 'lyrics');
-                        providerSucceeded('vagalume');
-                        return { song, provider: 'vagalume', cached: false };
-                    }
-                }
-                catch { /* candidato web individual inválido; continua */ }
-            }
-            providerFailed('vagalume');
+            catch { /* tenta o próximo candidato */ }
         }
-        catch {
-            providerFailed('vagalume');
-        }
-    }
-    const query = [normalized.artist, normalized.title].filter(Boolean).join(' ').trim();
-    if (query && (desiredProvider === 'multi-provider' || desiredProvider === 'genius' || allowCrossProviderFallback) && config.providers.genius.enabled) {
+        return null;
+    };
+
+    const providerPlan = desiredProvider === 'vagalume'
+        ? ['vagalume', 'letras_mus_br']
+        : ['letras_mus_br', 'vagalume'];
+    for (const provider of providerPlan) {
+        const budgetMs = remainingBudget(deadline, provider === providerPlan[0] ? 4500 : 3000);
+        if (!budgetMs)
+            break;
         try {
-            let matches = [];
-            if (config.providers.genius.accessToken) {
-                try {
-                    matches = await searchGenius(config.providers.genius.baseUrl, config.providers.genius.accessToken, query, 3, config.providers.genius.timeoutMs);
-                }
-                catch { /* fallback web abaixo */ }
-            }
-            if (!matches.length) {
-                matches = await searchGeniusWeb(config.providers.genius.webBaseUrl, query, 3, config.providers.genius.timeoutMs);
-            }
-            for (const match of matches) {
-                if (!match.sourceUrl)
-                    continue;
-                const scraped = await fetchScrapedSong(match.sourceUrl, 'genius', config.providers.genius.timeoutMs);
-                if (scraped && songMatchesRequest(scraped, normalized)) {
-                    const song = enrichSong(scraped);
-                    setInCache(key, song, 'lyrics');
-                    if (song.sourceUrl) setInCache(sourceLyricsCacheKey(song.sourceUrl), song, 'lyrics');
-                    providerSucceeded('genius');
-                    return { song, provider: 'genius', cached: false };
-                }
-            }
+            const song = provider === 'vagalume'
+                ? await lookupVagalume(budgetMs)
+                : await lookupLetras(budgetMs);
+            if (song)
+                return saveSong(song, provider);
+            providerFailed(provider);
         }
         catch {
-            providerFailed('genius');
+            providerFailed(provider);
         }
     }
-    if (query && (desiredProvider === 'multi-provider' || desiredProvider === 'letras_mus_br' || allowCrossProviderFallback) && config.providers.letrasMusBr.enabled) {
-        try {
-            const matches = await searchLetrasMusBr(config.providers.letrasMusBr.baseUrl, query, 4, config.providers.letrasMusBr.timeoutMs);
-            for (const match of matches) {
-                if (!match.sourceUrl)
-                    continue;
-                const scraped = await fetchScrapedSong(match.sourceUrl, 'letras_mus_br', config.providers.letrasMusBr.timeoutMs);
-                if (scraped && songMatchesRequest(scraped, normalized)) {
-                    const song = enrichSong({ ...scraped, title: normalized.title || scraped.title, artist: normalized.artist || scraped.artist });
-                    setInCache(key, song, 'lyrics');
-                    if (song.sourceUrl) setInCache(sourceLyricsCacheKey(song.sourceUrl), song, 'lyrics');
-                    providerSucceeded('letras_mus_br');
-                    return { song, provider: 'letras_mus_br', cached: false };
-                }
-            }
-        }
-        catch {
-            providerFailed('letras_mus_br');
-        }
-    }
-    if (desiredProvider === 'multi-provider' || desiredProvider === 'custom') {
-        try {
-            const song = await customGet(normalized);
-            if (song) {
-                setInCache(key, song, 'lyrics');
-                providerSucceeded('custom');
-                return { song, provider: 'custom_api', cached: false };
-            }
-        }
-        catch {
-            providerFailed('custom');
-        }
-    }
-    return { song: null, provider: desiredProvider, cached: false };
+    return { song: null, provider: desiredProvider === 'multi-provider' ? 'dual-source' : desiredProvider, cached: false };
 }
 
 // Exportações de teste do motor de busca. Não fazem parte do contrato HTTP.
@@ -1135,10 +907,8 @@ export const __lyricsSearchInternals = {
     diceSimilarity,
     resultIntentScore,
     dedupeResults,
-    matchingLyricsPreview,
     lyricsMatchQuality,
     orderedTermCoverage,
     sameSongConfidence,
     tokenCoverage,
-    enrichTopResultMetadata,
 };

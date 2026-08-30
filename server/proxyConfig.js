@@ -1,7 +1,6 @@
 import { PROXY_SERVER_NAME, PROXY_VERSION } from './meta.js';
 export const OFFICIAL_PROXY_BASE_URL = 'https://proxy-letras.vercel.app';
 const SECRET_PLACEHOLDER = '••••••••';
-const SENSITIVE_HEADER = /^(authorization|proxy-authorization|cookie|set-cookie|x-api-key|api-key)$/i;
 function envList(name) {
     return (process.env[name] || '')
         .split(',')
@@ -50,29 +49,10 @@ export const defaultProxyConfig = {
             apiKey: process.env.VAGALUME_API_KEY || '',
             timeoutMs: 4500,
         },
-        genius: {
-            // A API melhora a busca quando configurada; scraping web permanece como fallback.
-            enabled: true,
-            baseUrl: 'https://api.genius.com',
-            webBaseUrl: 'https://genius.com',
-            accessToken: process.env.GENIUS_ACCESS_TOKEN || '',
-            timeoutMs: 4500,
-        },
         letrasMusBr: {
             enabled: true,
             baseUrl: 'https://www.letras.mus.br',
             timeoutMs: 5000,
-        },
-        customApi: {
-            enabled: Boolean(process.env.CUSTOM_GOSPEL_API_URL),
-            endpointUrl: process.env.CUSTOM_GOSPEL_API_URL || '',
-            authHeader: process.env.CUSTOM_GOSPEL_API_AUTH || '',
-            customHeaders: {
-                Accept: 'application/json',
-                'User-Agent': `GospelLyricsProxy/${PROXY_VERSION}`,
-            },
-            method: 'POST',
-            responsePath: 'data.lyrics',
         },
     },
     filters: {
@@ -97,23 +77,6 @@ function mergeSecret(current, incoming) {
     if (incoming === '__CLEAR__')
         return '';
     return incoming;
-}
-function mergeSensitiveHeaders(current, incoming) {
-    if (!incoming)
-        return current;
-    const merged = { ...(current || {}) };
-    for (const [key, value] of Object.entries(incoming)) {
-        if (value === SECRET_PLACEHOLDER || value === '') {
-            if (!(key in merged))
-                merged[key] = value;
-            continue;
-        }
-        if (value === '__CLEAR__')
-            delete merged[key];
-        else
-            merged[key] = value;
-    }
-    return merged;
 }
 export function updateProxyConfig(newConfig) {
     currentConfig = {
@@ -143,20 +106,9 @@ export function updateProxyConfig(newConfig) {
                 ...(newConfig.providers?.vagalume || {}),
                 apiKey: mergeSecret(currentConfig.providers.vagalume.apiKey, newConfig.providers?.vagalume?.apiKey),
             },
-            genius: {
-                ...currentConfig.providers.genius,
-                ...(newConfig.providers?.genius || {}),
-                accessToken: mergeSecret(currentConfig.providers.genius.accessToken, newConfig.providers?.genius?.accessToken),
-            },
             letrasMusBr: {
                 ...currentConfig.providers.letrasMusBr,
                 ...(newConfig.providers?.letrasMusBr || {}),
-            },
-            customApi: {
-                ...currentConfig.providers.customApi,
-                ...(newConfig.providers?.customApi || {}),
-                authHeader: mergeSecret(currentConfig.providers.customApi.authHeader, newConfig.providers?.customApi?.authHeader),
-                customHeaders: mergeSensitiveHeaders(currentConfig.providers.customApi.customHeaders, newConfig.providers?.customApi?.customHeaders),
             },
         },
         filters: {
@@ -176,10 +128,6 @@ export function resetProxyConfig() {
  */
 export function getSafeProxyConfig() {
     const config = currentConfig;
-    const customHeaders = Object.fromEntries(Object.entries(config.providers.customApi.customHeaders || {}).map(([key, value]) => [
-        key,
-        SENSITIVE_HEADER.test(key) && value ? SECRET_PLACEHOLDER : value,
-    ]));
     return {
         version: config.version,
         serverName: config.serverName,
@@ -204,24 +152,7 @@ export function getSafeProxyConfig() {
                 configured: Boolean(config.providers.vagalume.apiKey),
                 apiKey: config.providers.vagalume.apiKey ? SECRET_PLACEHOLDER : '',
             },
-            genius: {
-                enabled: config.providers.genius.enabled,
-                baseUrl: config.providers.genius.baseUrl,
-                webBaseUrl: config.providers.genius.webBaseUrl,
-                timeoutMs: config.providers.genius.timeoutMs,
-                configured: Boolean(config.providers.genius.accessToken),
-                accessToken: config.providers.genius.accessToken ? SECRET_PLACEHOLDER : '',
-            },
             letrasMusBr: { ...config.providers.letrasMusBr },
-            customApi: {
-                enabled: config.providers.customApi.enabled,
-                endpointUrl: config.providers.customApi.endpointUrl,
-                method: config.providers.customApi.method,
-                responsePath: config.providers.customApi.responsePath,
-                configured: Boolean(config.providers.customApi.endpointUrl),
-                authHeader: config.providers.customApi.authHeader ? SECRET_PLACEHOLDER : '',
-                customHeaders,
-            },
         },
         filters: { ...config.filters },
     };

@@ -1,8 +1,6 @@
-# Gospel Lyrics Proxy 2.9.0
+# Gospel Lyrics Proxy 2.10.0
 
 Produção Vercel consolidada em uma única Function (`api/index.js`) com limpeza automática de rotas legadas no build.
-
-# Gospel Lyrics Proxy v2.6
 
 ## GLX Extraction Engine 3.1
 
@@ -32,11 +30,11 @@ Backend privado para a aba **Letras** do Harpa & Bíblia. Ele centraliza busca, 
 
 ## Recursos
 
-- busca multi-provider com biblioteca local + Letras.mus.br + Vagalume + Genius;
-- busca refinada por **título, artista ou trecho da letra**, com variantes de consulta, similaridade textual, validação limitada da letra completa e reranking por intenção;
-- resultados duplicados de provedores diferentes são fundidos para aproveitar o melhor título/URL junto com **álbum, capa e trecho relevante** de outras fontes;
-- Vagalume e Genius continuam operacionais por fallback web quando não há credencial; as APIs são caminhos preferenciais quando configuradas;
-- endpoint customizado opcional;
+- fluxo remoto enxuto com apenas **Letras.mus.br + Vagalume**, além da biblioteca local;
+- roteamento adaptativo: **Letras primeiro para título/artista** e **Vagalume primeiro para trecho**; o segundo provedor só é acionado quando o primeiro não entrega um candidato forte;
+- busca refinada por **título, artista ou trecho da letra**, sem abrir páginas completas de letras durante a listagem;
+- Vagalume usa `search.excerpt` sem credencial para descoberta por trecho e API oficial quando `VAGALUME_API_KEY` estiver configurada;
+- a letra completa é hidratada somente após a seleção do resultado, reduzindo latência e carga externa;
 - GLX Extraction Engine 3.1 com ensemble multi-parser/multi-estratégia, dados estruturados, hydration state, análise estrutural, blocos contextuais e resgate adaptativo;
 - cache TTL limitado em memória e deduplicação de resultados;
 - timeouts, circuit breaker por provedor e rate limit;
@@ -82,17 +80,15 @@ Endpoint oficial usado pelo APK: `https://proxy-letras.vercel.app`. Produção u
 Validação pós-deploy recomendada: `GET /api/health` deve responder `status: online` e informar a versão/recursos do GLX.
 
 
-## Fontes do motor 2.6
+## Fontes ativas do motor 2.10
 
-O modo `multi-provider` usa os provedores em paralelo e deduplica os resultados:
+O modo `multi-provider` permanece como nome de contrato por compatibilidade com o APK, mas o runtime remoto é deliberadamente **dual-source e adaptativo**, não um fan-out para várias fontes:
 
 - **Biblioteca local**: dados embarcados no Proxy, sem rede.
-- **Letras.mus.br**: busca HTML/estado estruturado e extração GLX da URL exata.
-- **Vagalume**: `search.excerpt` para descoberta sem credencial quando disponível; API `search.php` é preferida com `VAGALUME_API_KEY`; páginas web `/artista/musica.html` são fallback e passam pelo GLX.
-- **Genius**: API oficial `api.genius.com/search` é preferida com `GENIUS_ACCESS_TOKEN`; sem token, tenta a busca pública web e usa GLX na página da música. Ambientes de datacenter podem receber bloqueio/captcha do Genius, portanto esse provedor nunca é o único caminho.
-- **Custom API**: opcional e desativada enquanto `CUSTOM_GOSPEL_API_URL` não for configurada.
+- **Letras.mus.br**: fonte primária para pesquisas por título/artista; a URL exata é preservada e a letra é extraída pelo GLX somente quando o usuário abre o resultado.
+- **Vagalume**: fonte primária para pesquisas por trecho via `search.excerpt`; para obtenção da letra, usa API `search.php` quando há `VAGALUME_API_KEY` e web/GLX como fallback.
 
-O `/api/health` expõe `activeProviders` e `providerModes` sem revelar chaves.
+Genius e API customizável foram removidos do caminho de execução e da configuração para reduzir latência, variabilidade, manutenção e risco de timeout. O segundo provedor ativo só é consultado quando necessário. O `/api/health` expõe `activeProviders`, `providerModes` e as capacidades do roteamento adaptativo sem revelar chaves.
 
 ## Vercel
 

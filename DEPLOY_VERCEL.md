@@ -1,23 +1,41 @@
-# Deploy no Vercel — Proxy 2.9.0
+# Deploy no Vercel — Proxy 2.10.0
 
-## Mudança estrutural
-A produção agora usa **uma única Function**: `api/index.js`.
-Todas as rotas públicas são reescritas para ela pelo `vercel.json`.
+## Estrutura atual
 
-O build executa `node scripts/prepare-vercel.mjs`. Esse script remove Functions antigas que possam ter permanecido no checkout do Vercel antes da etapa final de empacotamento.
+As rotas públicas possuem Functions `.js` físicas e leves em `api/` (por exemplo `api/proxy/lyrics/search.js`). Elas delegam para `api/index.js`, que preserva o pathname original e encaminha a chamada ao router compartilhado.
+
+O health continua com caminho leve. Busca e obtenção de letra carregam o runtime sob demanda.
+
+## Fontes ativas
+
+O runtime remoto usa somente **Letras.mus.br + Vagalume**. O valor `multi-provider` permanece no contrato HTTP para compatibilidade, mas significa roteamento adaptativo entre essas duas fontes:
+
+- título/artista: Letras primeiro; Vagalume somente se necessário;
+- trecho: Vagalume `search.excerpt` primeiro; Letras somente se necessário;
+- a listagem não abre páginas completas de letras;
+- a hidratação da letra completa ocorre em `/api/proxy/lyrics/get` após o usuário selecionar um resultado.
 
 ## Configuração
+
 - Framework Preset: Other
 - Root Directory: `./`
-- Build Command: use o projeto (`node scripts/prepare-vercel.mjs`)
-- Install Command: automático
-- Output Directory: vazio
-- Node.js: 24.x
+- Install Command: automático (`npm install`)
+- Build Command: o `vercel.json` usa `echo GLX_NO_BUILD_REQUIRED`
+- Output Directory: `public`
+- Node.js: 24.x (definido em `package.json`)
+- `LYRICS_SEARCH_BUDGET_MS`: opcional; padrão 5200 ms, faixa 3200–9000 ms
+- `LYRICS_GET_BUDGET_MS`: opcional; padrão 8500 ms, faixa 5000–12000 ms
+- `VAGALUME_API_KEY`: opcional; a busca por trecho funciona sem chave pelo índice público
 
-## Git
-Se o projeto estiver conectado a Git, crie um **novo commit** com esta revisão. Um Redeploy do mesmo SHA pode reutilizar o deployment anterior. Remova os arquivos legados do Git quando possível.
+## Git / upload
 
-## Teste
-`GET https://proxy-letras.vercel.app/api/health`
+Faça o deploy da pasta raiz deste Proxy, mantendo `api/`, `server/`, `public/`, `package.json` e `vercel.json`.
 
-Esperado: HTTP 200, `version: "2.9.0"`.
+## Smoke tests
+
+1. `GET /api/health` → HTTP 200, `status: "online"` e `activeProviders` igual a `database`, `letras_mus_br`, `vagalume`.
+2. `POST /api/proxy/lyrics/search` com `{ "query": "nome do artista", "provider": "multi-provider" }` → HTTP 200 e, quando Letras responder com candidato forte, `providersUsed: ["letras_mus_br"]`.
+3. Repita com nome de música.
+4. Repita com um trecho claro de 5+ palavras → o Vagalume deve ser a fonte primária; a busca não deve abrir uma página de letra completa.
+5. Abra um resultado em `POST /api/proxy/lyrics/get` e confirme `fullLyrics` não vazio.
+6. Simule falha/resultado vazio da fonte primária e confirme que apenas então a segunda fonte aparece em `providersUsed`.

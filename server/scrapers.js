@@ -20,6 +20,17 @@ const MAX_RESPONSE_BYTES = 2_500_000;
 function abortSignal(timeoutMs) {
     return AbortSignal.timeout(Math.max(1000, Math.min(timeoutMs, 15_000)));
 }
+function totalBudget(timeoutMs) {
+    const deadline = Date.now() + Math.max(1000, Math.min(timeoutMs, 15_000));
+    return {
+        next(maxMs = 2200) {
+            const remaining = Math.max(0, deadline - Date.now());
+            if (remaining < 900)
+                return 0;
+            return Math.max(900, Math.min(maxMs, remaining));
+        },
+    };
+}
 function sleep(ms) {
     return new Promise(resolve => setTimeout(resolve, ms));
 }
@@ -82,7 +93,7 @@ function metaContent(html, key) {
 }
 function normalizeDisplayTitle(raw) {
     return decodeHtml(raw)
-        .replace(/\s*[-|]\s*(letras(?:\.mus\.br|\.com)?|genius|vagalume).*$/i, '')
+        .replace(/\s*[-|]\s*(letras(?:\.mus\.br|\.com)?|vagalume).*$/i, '')
         .replace(/\s+lyrics\s*$/i, '')
         .trim();
 }
@@ -503,12 +514,10 @@ function providerAnchorResult(rawHref, rawLabel, base, query, source, seen, cont
     catch {
         return null;
     }
-    const allowedHosts = source === 'genius' ? ['genius.com'] : ['vagalume.com.br'];
+    const allowedHosts = ['vagalume.com.br'];
     if (!isAllowedLyricsUrl(url.toString(), allowedHosts))
         return null;
-    if (source === 'vagalume' && !/\.html$/i.test(url.pathname))
-        return null;
-    if (source === 'genius' && !/-lyrics\/?$/i.test(url.pathname))
+    if (!/\.html$/i.test(url.pathname))
         return null;
     url.search = '';
     url.hash = '';
@@ -534,16 +543,12 @@ function providerAnchorResult(rawHref, rawLabel, base, query, source, seen, cont
         if (!title || title.length < 2)
             title = parts[1].replace(/-/g, ' ').replace(/\b\w/g, char => char.toUpperCase());
     }
-    if (source === 'genius' && /lyrics/i.test(title))
-        title = title.replace(/\s+lyrics\s*$/i, '').trim();
     const preview = contextMatches >= minimumContextMatches ? compactPreview(contextText, query) : '';
     return {
         id: stableId(source, canonical),
         title,
         artist: artist || 'Artista',
-        preview: preview || (source === 'vagalume'
-            ? 'Resultado encontrado no Vagalume.'
-            : 'Resultado encontrado no Genius.'),
+        preview: preview || 'Resultado encontrado no Vagalume.',
         source,
         sourceUrl: canonical,
         imageUrl,
@@ -582,74 +587,6 @@ function parseProviderSearchHtml(html, baseUrl, query, source, limit) {
         }
     }
     return results.sort((a, b) => b.score - a.score).slice(0, limit);
-}
-export async function searchGeniusWeb(webBaseUrl, query, limit, timeoutMs) {
-    const normalizedBase = webBaseUrl.replace(/\/+$/, '');
-    const baseHost = new URL(normalizedBase).hostname;
-    // A busca web JSON é preferida ao HTML porque /search pode ser renderizado no cliente.
-    // Mantemos dois formatos observados do próprio Genius para sobreviver a alterações incrementais.
-    const jsonEndpoints = [
-        `${normalizedBase}/api/search/multi?per_page=${Math.max(1, Math.min(limit, 10))}&q=${encodeURIComponent(query.trim())}`,
-        `${normalizedBase}/api/search/song?page=1&q=${encodeURIComponent(query.trim())}`,
-    ];
-    let endpointError;
-    for (const endpoint of jsonEndpoints) {
-        try {
-            const raw = await fetchText(endpoint, timeoutMs, { Accept: 'application/json' }, [baseHost]);
-            const data = JSON.parse(raw);
-            const response = data?.response || data;
-            const sections = Array.isArray(response?.sections) ? response.sections : [];
-            const sectionHits = sections.flatMap((section) => Array.isArray(section?.hits) ? section.hits : []);
-            const directHits = Array.isArray(response?.hits) ? response.hits : [];
-            const hits = sectionHits.length ? sectionHits : directHits;
-            const results = hits.map((hit, index) => {
-                const result = hit?.result || hit;
-                const hitType = String(hit?.type || result?.type || '').toLowerCase();
-                if (hitType && !['song', 'lyric', 'lyrics'].includes(hitType))
-                    return null;
-                const rawSourceUrl = result?.url || result?.path;
-                const sourceUrl = rawSourceUrl ? new URL(String(rawSourceUrl), normalizedBase).toString() : '';
-                if (!result?.title || !sourceUrl || !isAllowedLyricsUrl(sourceUrl, ['genius.com']))
-                    return null;
-                const highlights = Array.isArray(hit?.highlights) ? hit.highlights : [];
-                const highlight = highlights
-                    .map(value => compactPreview(value?.value || value?.text || '', query))
-                    .find(Boolean) || '';
-                const imageUrl = safeMediaUrl(String(result.song_art_image_thumbnail_url || result.song_art_image_url || result.header_image_thumbnail_url || result.header_image_url || result.primary_artist?.image_url || ''), normalizedBase);
-                const album = typeof result.album?.name === 'string' ? result.album.name : undefined;
-                return {
-                    id: `genius-web-${String(result.id || index)}`,
-                    title: String(result.title),
-                    artist: String(result.artist_names || result.primary_artist?.name || result.artist?.name || 'Artista'),
-                    album,
-                    imageUrl,
-                    preview: highlight || 'Resultado encontrado no Genius.',
-                    source: 'genius',
-                    sourceUrl,
-                    providerRef: result.id != null ? String(result.id) : undefined,
-                    score: 78 - index + (highlight ? 8 : 0),
-                };
-            }).filter(Boolean).slice(0, limit);
-            if (results.length)
-                return results;
-        }
-        catch (error) {
-            endpointError = error;
-        }
-    }
-    try {
-        const html = await fetchText(`${normalizedBase}/search?q=${encodeURIComponent(query.trim())}`, timeoutMs, {}, [baseHost]);
-        const results = parseProviderSearchHtml(html, normalizedBase, query, 'genius', limit);
-        if (results.length)
-            return results;
-    }
-    catch (error) {
-        if (!endpointError)
-            endpointError = error;
-    }
-    if (endpointError)
-        throw endpointError;
-    return [];
 }
 export async function searchVagalumeExcerpt(apiBaseUrl, webBaseUrl, query, limit, timeoutMs) {
     const apiBase = apiBaseUrl.replace(/\/+$/, '');
@@ -694,6 +631,7 @@ export async function searchVagalumeExcerpt(apiBaseUrl, webBaseUrl, query, limit
 export async function searchVagalumeWeb(webBaseUrl, query, artist, limit, timeoutMs) {
     const normalizedBase = webBaseUrl.replace(/\/+$/, '');
     const baseHost = new URL(normalizedBase).hostname;
+    const budget = totalBudget(timeoutMs);
     const searchUrls = [];
     const artistSlug = slugifySourcePart(artist);
     if (artistSlug)
@@ -701,8 +639,11 @@ export async function searchVagalumeWeb(webBaseUrl, query, artist, limit, timeou
     searchUrls.push(`${normalizedBase}/search/?q=${encodeURIComponent(query.trim())}`);
     let lastError;
     for (const url of searchUrls) {
+        const attemptBudget = budget.next(1900);
+        if (!attemptBudget)
+            break;
         try {
-            const html = await fetchText(url, timeoutMs, {}, [baseHost]);
+            const html = await fetchText(url, attemptBudget, {}, [baseHost]);
             const results = parseProviderSearchHtml(html, normalizedBase, query, 'vagalume', limit);
             if (results.length)
                 return results;
@@ -720,6 +661,7 @@ export async function searchVagalumeWeb(webBaseUrl, query, artist, limit, timeou
 export async function searchLetrasMusBr(baseUrl, query, limit, timeoutMs) {
     const normalizedBase = baseUrl.replace(/\/+$/, '');
     const baseHost = new URL(normalizedBase).hostname;
+    const budget = totalBudget(timeoutMs);
     const q = encodeURIComponent(query.trim());
     const searchUrls = [
         `${normalizedBase}/?q=${q}`,
@@ -728,8 +670,11 @@ export async function searchLetrasMusBr(baseUrl, query, limit, timeoutMs) {
     ];
     let lastError;
     for (const url of searchUrls) {
+        const attemptBudget = budget.next(1900);
+        if (!attemptBudget)
+            break;
         try {
-            const html = await fetchText(url, timeoutMs, {}, [baseHost]);
+            const html = await fetchText(url, attemptBudget, {}, [baseHost]);
             const parsed = parseAnchorResults(html, normalizedBase, query, limit);
             if (parsed.length)
                 return parsed;
@@ -785,7 +730,7 @@ function pageStructuredMedia(html, sourceUrl) {
     return { imageUrl, album };
 }
 export async function fetchScrapedSong(sourceUrl, source, timeoutMs) {
-    const allowedHosts = source === 'genius' ? ['genius.com'] : source === 'vagalume' ? ['vagalume.com.br'] : ['letras.mus.br', 'letras.com'];
+    const allowedHosts = source === 'vagalume' ? ['vagalume.com.br'] : ['letras.mus.br', 'letras.com'];
     if (!isAllowedLyricsUrl(sourceUrl, allowedHosts))
         throw new Error('URL de letra não autorizada');
     const html = await fetchText(sourceUrl, timeoutMs, {}, allowedHosts);
@@ -797,7 +742,7 @@ export async function fetchScrapedSong(sourceUrl, source, timeoutMs) {
     const album = metaContent(html, 'music:album') || structured.album || undefined;
     const imageUrl = safeMediaUrl(metaContent(html, 'og:image') || metaContent(html, 'twitter:image') || structured.imageUrl || '', new URL(sourceUrl));
     return {
-        id: stableId(source === 'genius' ? 'genius' : source === 'vagalume' ? 'vagalume' : 'letras', sourceUrl),
+        id: stableId(source === 'vagalume' ? 'vagalume' : 'letras', sourceUrl),
         title,
         artist,
         album,
@@ -809,43 +754,6 @@ export async function fetchScrapedSong(sourceUrl, source, timeoutMs) {
         extraction: extraction.diagnostics,
         fetchedAt: new Date().toISOString(),
     };
-}
-export async function searchGenius(baseUrl, accessToken, query, limit, timeoutMs) {
-    if (!accessToken.trim())
-        return [];
-    const url = `${baseUrl.replace(/\/+$/, '')}/search?q=${encodeURIComponent(query)}`;
-    const response = await fetch(url, {
-        headers: { Accept: 'application/json', Authorization: `Bearer ${accessToken}`, 'User-Agent': PROXY_API_USER_AGENT },
-        redirect: 'error',
-        signal: abortSignal(timeoutMs),
-    });
-    if (!response.ok)
-        throw new Error(`Genius HTTP ${response.status}`);
-    const data = await response.json();
-    const hits = Array.isArray(data?.response?.hits) ? data.response.hits : [];
-    return hits
-        .map((hit, index) => {
-        const result = hit?.result;
-        if (!result?.url || !result?.title || !isAllowedLyricsUrl(String(result.url), ['genius.com']))
-            return null;
-        const highlight = Array.isArray(hit?.highlights)
-            ? hit.highlights.map(value => compactPreview(value?.value || value?.text || '', query)).find(Boolean) || ''
-            : '';
-        return {
-            id: `genius-${String(result.id || index)}`,
-            title: String(result.title),
-            artist: String(result.primary_artist?.name || result.artist_names || 'Artista'),
-            album: typeof result.album?.name === 'string' ? result.album.name : undefined,
-            imageUrl: safeMediaUrl(String(result.song_art_image_thumbnail_url || result.song_art_image_url || result.header_image_thumbnail_url || result.primary_artist?.image_url || ''), baseUrl),
-            preview: highlight || 'Resultado encontrado no Genius.',
-            source: 'genius',
-            sourceUrl: String(result.url),
-            providerRef: result.id ? String(result.id) : undefined,
-            score: Math.max(45, 80 - index * 2) + (highlight ? 8 : 0),
-        };
-    })
-        .filter(Boolean)
-        .slice(0, limit);
 }
 export async function fetchVagalumeSong(baseUrl, apiKey, artist, title, timeoutMs) {
     if (!apiKey.trim() || !artist.trim() || !title.trim())

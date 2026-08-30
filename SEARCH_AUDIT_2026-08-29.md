@@ -28,3 +28,20 @@ A busca por artista era naturalmente forte, enquanto título e sobretudo trecho 
 ## Resultado esperado
 
 Busca por artista permanece forte, busca por título passa a privilegiar correspondência exata/similaridade e busca por trecho só recebe bônus máximo quando a frase é confirmada na letra completa. O Vagalume deixa de dominar por score bruto e passa a atuar como uma das fontes de descoberta/fallback do ensemble.
+
+## Hardening de runtime — 2026-08-30
+
+A auditoria do fluxo real identificou um multiplicador de timeout: o valor configurado para um provedor era reutilizado em cada URL de fallback e, depois da descoberta, a pesquisa ainda executava rodadas adicionais de resolução, validação, federação e hidratação. Em uma Function fria/lenta isso podia exceder a janela de resposta do cliente e aparecer como invocação sem status HTTP concluído (`Status: 0`).
+
+Correções aplicadas:
+
+- orçamento global de busca (`LYRICS_SEARCH_BUDGET_MS`, padrão 7200 ms);
+- orçamento total por provedor/fallback em Letras, Genius e Vagalume;
+- API + fallback web compartilham o mesmo orçamento quando há credenciais;
+- pesquisa normal por nome/artista/título não hidrata páginas completas de letra;
+- hidratação durante a pesquisa ficou restrita ao modo de trecho e a poucos candidatos;
+- remoção da rodada de federação/enriquecimento remoto do caminho crítico da listagem;
+- cache de pesquisa avançado para `search-v5` para não reutilizar resultados produzidos pela estratégia anterior;
+- resposta/log agora registra `partial` e quantidade de resultados quando um provedor falha sem derrubar o ensemble.
+
+O endpoint `/api/proxy/lyrics/get` continua responsável por recuperar e validar a letra completa ao abrir uma música, inclusive com fallback entre provedores quando título e artista estão disponíveis.
