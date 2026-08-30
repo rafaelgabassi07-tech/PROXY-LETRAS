@@ -2,8 +2,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-const here = path.dirname(fileURLToPath(import.meta.url));
-const root = path.resolve(here, '..');
+const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const failures = [];
 const skipDirs = new Set(['node_modules', '.git', '.vercel']);
 
@@ -17,31 +16,21 @@ function walk(dir) {
   }
   return out;
 }
-
-const allFiles = walk(root);
+const files = walk(root);
 const rel = file => path.relative(root, file).split(path.sep).join('/');
-const runtimeFiles = allFiles.filter(file => rel(file).startsWith('api/') || rel(file).startsWith('server/'));
-const tsAnywhere = allFiles.filter(file => /\.(?:ts|tsx|mts|cts)$/.test(file));
-if (tsAnywhere.length) failures.push(`TypeScript files found in production artifact: ${tsAnywhere.map(rel).join(', ')}`);
+const ts = files.filter(file => /\.(?:ts|tsx|mts|cts)$/i.test(file));
+if (ts.length) failures.push(`TypeScript runtime/source files found: ${ts.map(rel).join(', ')}`);
 
-// Vercel Functions are extensionless routes. Detect .js/.ts-style collisions inside /api.
-const functionStems = new Map();
-for (const file of allFiles) {
-  const r = rel(file);
-  if (!r.startsWith('api/')) continue;
-  const stem = r.replace(/\.[^/.]+$/, '');
-  if (!functionStems.has(stem)) functionStems.set(stem, []);
-  functionStems.get(stem).push(r);
-}
-for (const [stem, files] of functionStems) {
-  if (files.length > 1) failures.push(`Conflicting Vercel Function path ${stem}: ${files.join(' vs ')}`);
+const apiFiles = files.filter(file => rel(file).startsWith('api/'));
+if (apiFiles.length !== 1 || rel(apiFiles[0]) !== 'api/index.js') {
+  failures.push(`api/ must contain only api/index.js; found: ${apiFiles.map(rel).join(', ')}`);
 }
 
-const jsFiles = runtimeFiles.filter(file => /\.(?:js|mjs|cjs)$/.test(file));
+const jsFiles = files.filter(file => /\.(?:js|mjs|cjs)$/.test(file));
 const staticImport = /(?:from\s*|import\s*\()\s*['"]([^'"]+)['"]/g;
 for (const file of jsFiles) {
   const text = fs.readFileSync(file, 'utf8');
-  if (/['"][^'"]+\.(?:ts|tsx|mts|cts)['"]/.test(text)) failures.push(`${rel(file)} contains a TypeScript runtime specifier`);
+  if (/['"][^'"]+\.(?:ts|tsx|mts|cts)['"]/.test(text)) failures.push(`${rel(file)} contains TypeScript runtime specifier`);
   for (const match of text.matchAll(staticImport)) {
     const spec = match[1];
     if (!spec.startsWith('.')) continue;
@@ -50,24 +39,25 @@ for (const file of jsFiles) {
   }
 }
 
-const required = [
-  'api/health.js',
-  'api/proxy/health.js',
-  'api/proxy/lyrics/search.js',
-  'api/proxy/lyrics/get.js',
-  'server/healthHandler.js',
-  'server/vercelAdapter.js',
-  'server/proxyRouter.js',
-  'server/lyricsService.js',
-];
-for (const r of required) if (!fs.existsSync(path.join(root, r))) failures.push(`Missing ${r}`);
-if (fs.existsSync(path.join(root, 'server.ts')) || fs.existsSync(path.join(root, 'server.js'))) failures.push('Root server.ts/server.js must not exist.');
 const config = JSON.parse(fs.readFileSync(path.join(root, 'vercel.json'), 'utf8'));
-if (config.framework !== null) failures.push('vercel.json must use framework:null (Other).');
-if ('functions' in config) failures.push('vercel.json must not manually map functions.');
+if (config.framework !== null) failures.push('framework must be null (Other).');
+if (config.buildCommand !== 'node scripts/prepare-vercel.mjs') failures.push('buildCommand must clean legacy Functions.');
+if ('functions' in config) failures.push('Do not use manual functions mapping.');
+const destinations = (config.rewrites || []).map(item => item.destination || '');
+if (!destinations.length || destinations.some(dest => !dest.startsWith('/api/index?__glx_path='))) {
+  failures.push('Every API rewrite must target the single api/index Function.');
+}
+
+for (const required of ['api/index.js','server/healthHandler.js','server/vercelAdapter.js','server/proxyRouter.js','server/lyricsService.js','scripts/prepare-vercel.mjs']) {
+  if (!fs.existsSync(path.join(root, required))) failures.push(`Missing ${required}`);
+}
+
+const packageJson = JSON.parse(fs.readFileSync(path.join(root, 'package.json'), 'utf8'));
+if (packageJson.version !== '2.7.2') failures.push(`Expected version 2.7.2, got ${packageJson.version}`);
+if (packageJson.scripts?.build !== 'node scripts/prepare-vercel.mjs') failures.push('package build script does not run cleanup.');
 
 if (failures.length) {
   console.error(failures.join('\n'));
   process.exit(1);
 }
-console.log(`VERCEL_PRODUCTION_ARTIFACT_OK: ${jsFiles.length} runtime JS files; zero TypeScript files; zero Vercel route conflicts; all relative imports resolved`);
+console.log(`VERCEL_SINGLE_FUNCTION_OK: api/index.js only; ${jsFiles.length} JS modules; zero TypeScript; all relative imports resolved; legacy cleanup enabled`);

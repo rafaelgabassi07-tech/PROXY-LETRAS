@@ -1,3 +1,7 @@
+# Gospel Lyrics Proxy 2.7.2
+
+Produção Vercel consolidada em uma única Function (`api/index.js`) com limpeza automática de rotas legadas no build.
+
 # Gospel Lyrics Proxy v2.6
 
 ## GLX Extraction Engine 3.1

@@ -1,4 +1,4 @@
-# Production artifact is JavaScript-only. Never upload TypeScript runtime files.
+# Keep only production/runtime assets in source uploads.
 source/
 **/*.ts
 **/*.tsx

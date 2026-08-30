@@ -1,11 +1,12 @@
 {
   "name": "gospel-lyrics-proxy",
   "private": true,
-  "version": "2.7.1",
+  "version": "2.7.2",
   "type": "module",
   "scripts": {
     "start": "node local-server.js",
-    "test:deploy": "node scripts/verify-vercel-runtime.mjs"
+    "test:deploy": "node scripts/verify-vercel-runtime.mjs",
+    "build": "node scripts/prepare-vercel.mjs"
   },
   "dependencies": {
     "cheerio": "^1.2.0",
