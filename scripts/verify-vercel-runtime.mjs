@@ -42,22 +42,23 @@ for (const file of jsFiles) {
 const config = JSON.parse(fs.readFileSync(path.join(root, 'vercel.json'), 'utf8'));
 if (config.framework !== null) failures.push('framework must be null (Other).');
 if (config.buildCommand !== 'node scripts/prepare-vercel.mjs') failures.push('buildCommand must clean legacy Functions.');
+if (config.outputDirectory !== 'public') failures.push('outputDirectory must be public.');
 if ('functions' in config) failures.push('Do not use manual functions mapping.');
 const destinations = (config.rewrites || []).map(item => item.destination || '');
 if (!destinations.length || destinations.some(dest => !dest.startsWith('/api/index?__glx_path='))) {
   failures.push('Every API rewrite must target the single api/index Function.');
 }
 
-for (const required of ['api/index.js','server/healthHandler.js','server/vercelAdapter.js','server/proxyRouter.js','server/lyricsService.js','scripts/prepare-vercel.mjs']) {
+for (const required of ['api/index.js','server/healthHandler.js','server/vercelAdapter.js','server/proxyRouter.js','server/lyricsService.js','scripts/prepare-vercel.mjs','public/index.html']) {
   if (!fs.existsSync(path.join(root, required))) failures.push(`Missing ${required}`);
 }
 
 const packageJson = JSON.parse(fs.readFileSync(path.join(root, 'package.json'), 'utf8'));
-if (packageJson.version !== '2.7.2') failures.push(`Expected version 2.7.2, got ${packageJson.version}`);
+if (packageJson.version !== '2.7.3') failures.push(`Expected version 2.7.3, got ${packageJson.version}`);
 if (packageJson.scripts?.build !== 'node scripts/prepare-vercel.mjs') failures.push('package build script does not run cleanup.');
 
 if (failures.length) {
   console.error(failures.join('\n'));
   process.exit(1);
 }
-console.log(`VERCEL_SINGLE_FUNCTION_OK: api/index.js only; ${jsFiles.length} JS modules; zero TypeScript; all relative imports resolved; legacy cleanup enabled`);
+console.log(`VERCEL_SINGLE_FUNCTION_OUTPUT_OK: api/index.js only; public output ready; ${jsFiles.length} JS modules; zero TypeScript; all relative imports resolved; legacy cleanup enabled`);

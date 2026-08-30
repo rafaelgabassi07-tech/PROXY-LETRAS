@@ -1,4 +1,4 @@
-import { readdir, rm, stat } from 'node:fs/promises';
+import { copyFile, mkdir, readdir, rm, stat } from 'node:fs/promises';
 import { join, relative } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -17,7 +17,7 @@ async function walk(dir) {
 }
 
 // Em repositórios onde versões antigas foram extraídas por cima, remova todas
-// as Functions legadas e preserve somente a Function única da revisão 2.7.2.
+// as Functions legadas e preserve somente a Function única da revisão 2.7.3.
 for (const file of await walk(api)) {
   const rel = relative(api, file).replaceAll('\\', '/');
   if (rel !== 'index.js') await rm(file, { force: true });
@@ -31,4 +31,7 @@ for (const base of ['server']) {
   }
 }
 
-console.log('GLX_VERCEL_PREPARE_OK: api/index.js único; runtime legado removido');
+await mkdir(join(root, 'public'), { recursive: true });
+await copyFile(join(root, 'index.html'), join(root, 'public', 'index.html'));
+
+console.log('GLX_VERCEL_PREPARE_OK: api/index.js único; runtime legado removido; public/index.html gerado');

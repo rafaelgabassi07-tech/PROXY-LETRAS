@@ -1,4 +1,4 @@
-# Gospel Lyrics Proxy 2.7.2
+# Gospel Lyrics Proxy 2.7.3
 
 Produção Vercel consolidada em uma única Function (`api/index.js`) com limpeza automática de rotas legadas no build.
 
@@ -95,3 +95,8 @@ O `/api/health` expõe `activeProviders` e `providerModes` sem revelar chaves.
 ## Vercel
 
 O backend de produção é roteado por arquivos TypeScript dentro de `api/`. Não adicione `functions.server.ts` nem restaure `server.ts` na raiz. O dashboard está isolado em `web/`. Execute `npm run test:deploy` antes de publicar.
+
+
+## Vercel Output Directory
+
+Use `public`. The build creates `public/index.html` explicitly, while API routes continue through `api/index.js`.

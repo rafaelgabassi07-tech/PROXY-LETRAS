@@ -1,4 +1,4 @@
-# Deploy no Vercel — Proxy 2.7.2
+# Deploy no Vercel — Proxy 2.7.3
 
 ## Mudança estrutural
 A produção agora usa **uma única Function**: `api/index.js`.
@@ -20,4 +20,4 @@ Se o projeto estiver conectado a Git, crie um **novo commit** com esta revisão.
 ## Teste
 `GET https://proxy-letras.vercel.app/api/health`
 
-Esperado: HTTP 200, `version: "2.7.2"`.
+Esperado: HTTP 200, `version: "2.7.3"`.

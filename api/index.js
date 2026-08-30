@@ -34,7 +34,7 @@ export default {
         code: 'RUNTIME_BOOT_FAILED',
         error: 'O runtime do motor de letras não conseguiu inicializar.',
         diagnostic: String(error?.message || error?.name || 'runtime-import-failed').slice(0, 300),
-        version: '2.7.2'
+        version: '2.7.3'
       }, { status: 503, headers: { 'Cache-Control': 'no-store' } });
     }
   }

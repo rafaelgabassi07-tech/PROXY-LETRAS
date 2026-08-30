@@ -3,16 +3,50 @@
   "framework": null,
   "buildCommand": "node scripts/prepare-vercel.mjs",
   "rewrites": [
-    { "source": "/api/health", "destination": "/api/index?__glx_path=/api/health" },
-    { "source": "/api/proxy/health", "destination": "/api/index?__glx_path=/api/proxy/health" },
-    { "source": "/api/proxy/lyrics/search", "destination": "/api/index?__glx_path=/api/proxy/lyrics/search" },
-    { "source": "/api/proxy/lyrics/get", "destination": "/api/index?__glx_path=/api/proxy/lyrics/get" },
-    { "source": "/api/proxy/lyrics/raw", "destination": "/api/index?__glx_path=/api/proxy/lyrics/raw" },
-    { "source": "/api/proxy/config", "destination": "/api/index?__glx_path=/api/proxy/config" },
-    { "source": "/api/proxy/config/reset", "destination": "/api/index?__glx_path=/api/proxy/config/reset" },
-    { "source": "/api/proxy/samples", "destination": "/api/index?__glx_path=/api/proxy/samples" },
-    { "source": "/api/proxy/logs", "destination": "/api/index?__glx_path=/api/proxy/logs" },
-    { "source": "/api/proxy/logs/clear", "destination": "/api/index?__glx_path=/api/proxy/logs/clear" },
-    { "source": "/api/proxy/cache/clear", "destination": "/api/index?__glx_path=/api/proxy/cache/clear" }
-  ]
+    {
+      "source": "/api/health",
+      "destination": "/api/index?__glx_path=/api/health"
+    },
+    {
+      "source": "/api/proxy/health",
+      "destination": "/api/index?__glx_path=/api/proxy/health"
+    },
+    {
+      "source": "/api/proxy/lyrics/search",
+      "destination": "/api/index?__glx_path=/api/proxy/lyrics/search"
+    },
+    {
+      "source": "/api/proxy/lyrics/get",
+      "destination": "/api/index?__glx_path=/api/proxy/lyrics/get"
+    },
+    {
+      "source": "/api/proxy/lyrics/raw",
+      "destination": "/api/index?__glx_path=/api/proxy/lyrics/raw"
+    },
+    {
+      "source": "/api/proxy/config",
+      "destination": "/api/index?__glx_path=/api/proxy/config"
+    },
+    {
+      "source": "/api/proxy/config/reset",
+      "destination": "/api/index?__glx_path=/api/proxy/config/reset"
+    },
+    {
+      "source": "/api/proxy/samples",
+      "destination": "/api/index?__glx_path=/api/proxy/samples"
+    },
+    {
+      "source": "/api/proxy/logs",
+      "destination": "/api/index?__glx_path=/api/proxy/logs"
+    },
+    {
+      "source": "/api/proxy/logs/clear",
+      "destination": "/api/index?__glx_path=/api/proxy/logs/clear"
+    },
+    {
+      "source": "/api/proxy/cache/clear",
+      "destination": "/api/index?__glx_path=/api/proxy/cache/clear"
+    }
+  ],
+  "outputDirectory": "public"
 }
