@@ -2,5 +2,11 @@
   "$schema": "https://openapi.vercel.sh/vercel.json",
   "framework": null,
   "buildCommand": "echo GLX_NO_BUILD_REQUIRED",
-  "outputDirectory": "public"
+  "outputDirectory": "public",
+  "rewrites": [
+    {
+      "source": "/api/proxy/lyrics/search",
+      "destination": "/api/index?__glx_path=%2Fapi%2Fproxy%2Flyrics%2Fsearch"
+    }
+  ]
 }

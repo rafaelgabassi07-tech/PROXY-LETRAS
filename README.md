@@ -1,4 +1,4 @@
-# Gospel Lyrics Proxy 2.11.4
+# Gospel Lyrics Proxy 2.11.5
 
 Backend privado da página **Letras** do Harpa & Bíblia, otimizado para Vercel Functions e para uma única caixa de busca capaz de receber título, artista ou trecho da letra.
 
@@ -80,7 +80,7 @@ npm run test:catalog-routing
 
 ## GLX Extraction Engine 3.1
 
-O GLX continua disponível para fallbacks web do Vagalume e recuperação de páginas, com parse5/htmlparser2, dados estruturados, análise de densidade textual, validação de redirects/hosts, limite de corpo em streaming e diagnóstico de qualidade. Ele não é usado para descobrir título no caminho primário da 2.11.4; essa função agora pertence ao catálogo JSON.
+O GLX continua disponível para fallbacks web do Vagalume e recuperação de páginas, com parse5/htmlparser2, dados estruturados, análise de densidade textual, validação de redirects/hosts, limite de corpo em streaming e diagnóstico de qualidade. Ele não é usado para descobrir título no caminho primário da 2.11.5; essa função agora pertence ao catálogo JSON.
 
 
 ## Metadados visuais
@@ -88,5 +88,10 @@ O GLX continua disponível para fallbacks web do Vagalume e recuperação de pá
 A busca usa LRCLIB para descoberta estruturada e Vagalume para complementar capa/álbum. O enriquecimento prioriza a discografia do Vagalume e usa a imagem do artista apenas como fallback, sem adicionar uma terceira fonte.
 
 
-### Diagnóstico de busca 2.11.4
+### Diagnóstico de busca 2.11.5
 A rota `/api/proxy/lyrics/search` emite `proxy_request_start` ao entrar no runtime e `proxy_request` ao concluir. O log final inclui `clientMode` e `mediaDeferred`; isso diferencia timeout de plataforma de lentidão dos provedores sem registrar o texto pesquisado.
+
+
+## Correção 2.11.5 — rota de busca centralizada
+
+`POST /api/proxy/lyrics/search` é reescrito internamente para `api/index` para evitar uma Function física isolada entrar em cold start/timeout antes de registrar a requisição. `api/index` emite `proxy_edge_entry` antes do carregamento do runtime; depois o router emite `proxy_request_start` e `proxy_request`. O contrato público do endpoint não muda.

@@ -5,7 +5,14 @@ const pkg = JSON.parse(fs.readFileSync(new URL('../package.json', import.meta.ur
 const config = JSON.parse(fs.readFileSync(new URL('../vercel.json', import.meta.url), 'utf8'));
 if (config.framework !== null) throw new Error('Vercel Framework Preset must be Other (framework: null).');
 if ('functions' in config) throw new Error('Do not map functions manually; files under /api are detected natively.');
-if (fs.existsSync(new URL('../server.ts', import.meta.url))) throw new Error('server.ts must not exist at root; it would trigger Express auto-detection.');
+const searchRewrite = Array.isArray(config.rewrites) && config.rewrites.find(item => item?.source === '/api/proxy/lyrics/search');
+if (!searchRewrite || !String(searchRewrite.destination || '').startsWith('/api/index?__glx_path=')) {
+  throw new Error('/api/proxy/lyrics/search must be internally rewritten to centralized /api/index.');
+}
+const vercelIgnore = fs.readFileSync(new URL('../.vercelignore', import.meta.url), 'utf8');
+if (fs.existsSync(new URL('../server.ts', import.meta.url)) && !vercelIgnore.includes('**/*.ts')) {
+  throw new Error('Root server.ts is development-only and must be excluded from Vercel via **/*.ts.');
+}
 for (const dep of ['express', 'express-rate-limit', 'helmet']) {
   if (pkg.dependencies?.[dep]) throw new Error(`${dep} must not be required by the Vercel-native backend.`);
 }

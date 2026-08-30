@@ -18,9 +18,9 @@ const expectedApi = [
   'api/proxy/cache/clear.js',
 ];
 
-// Preparação propositalmente NÃO destrutiva. As Functions de compatibilidade são
-// necessárias porque o vercel.json não usa rewrites; removê-las quebra exatamente
-// /api/health e /api/proxy/lyrics/* consumidos pelo APK.
+// Preparação propositalmente NÃO destrutiva. As Functions de compatibilidade continuam
+// presentes para clientes legados; o vercel.json centraliza apenas /lyrics/search em /api/index
+// para reduzir risco de cold start/roteamento isolado sem quebrar o contrato público.
 for (const relative of expectedApi) {
   await access(join(root, relative));
 }
