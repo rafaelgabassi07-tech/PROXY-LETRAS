@@ -68,15 +68,18 @@ async function main() {
                                             id: 901,
                                             title: 'Canção Genius',
                                             artist_names: 'Ministério Genius',
-                                            url: 'https://genius.com/Ministerio-genius-cancao-genius-lyrics'
-                                        } }] }] } }), { status: 200, headers: { 'content-type': 'application/json' } });
+                                            url: 'https://genius.com/Ministerio-genius-cancao-genius-lyrics',
+                                            song_art_image_thumbnail_url: 'https://images.genius.com/selftest-cover.jpg',
+                                            album: { name: 'Álbum Genius' }
+                                        }, highlights: [{ value: 'Jesus é esperança, graça e vida para todos os dias' }] }] }] } }), { status: 200, headers: { 'content-type': 'application/json' } });
             }
             if (url === 'https://genius.com/Ministerio-genius-cancao-genius-lyrics') {
                 return new Response('<html><head><meta property="og:title" content="Canção Genius by Ministério Genius"></head><body><div data-lyrics-container="true">Verso de adoração suficientemente longo para o motor próprio identificar o conteúdo.<br>Jesus é esperança, graça e vida para todos os dias.<br>Refrão com louvor e fé repetido para validar a extração musical.<br>Outra linha extensa de conteúdo da canção para assegurar qualidade.</div></body></html>', { status: 200, headers: { 'content-type': 'text/html; charset=utf-8' } });
             }
             if (url.includes('api.vagalume.com.br/search.excerpt')) {
                 return new Response(JSON.stringify({ response: { docs: [{
-                                id: 'vg-77', title: 'Canção Vagalume (Ao Vivo)', band: 'Ministério Teste'
+                                id: 'vg-77', title: 'Canção Vagalume (Ao Vivo)', band: 'Ministério Teste',
+                                snippet: 'Graça e esperança em Jesus aparecem nesta canção de teste'
                             }] } }), { status: 200, headers: { 'content-type': 'application/json' } });
             }
             if (url === 'https://www.vagalume.com.br/ministerio-teste/cancao-vagalume-ao-vivo.html') {
@@ -111,12 +114,16 @@ async function main() {
         const geniusSearch = await handleApiRequest('/api/proxy/lyrics/search', 'POST', { 'x-forwarded-for': 'selftest-genius-web' }, { query: 'Canção Genius', provider: 'genius', limit: 3 });
         assert.equal(geniusSearch.status, 200);
         assert.equal(geniusSearch.body.data[0]?.source, 'genius');
+        assert.equal(geniusSearch.body.data[0]?.imageUrl, 'https://images.genius.com/selftest-cover.jpg');
+        assert.equal(geniusSearch.body.data[0]?.album, 'Álbum Genius');
+        assert.match(geniusSearch.body.data[0]?.preview || '', /esperança/i);
         const geniusGet = await handleApiRequest('/api/proxy/lyrics/get', 'POST', { 'x-forwarded-for': 'selftest-genius-web-get' }, { ...geniusSearch.body.data[0], provider: 'genius' });
         assert.equal(geniusGet.status, 200);
         assert.match(geniusGet.body.data.fullLyrics, /esperança/i);
         const vagalumeSearch = await handleApiRequest('/api/proxy/lyrics/search', 'POST', { 'x-forwarded-for': 'selftest-vagalume-web' }, { query: 'Canção Vagalume', artist: 'Ministério Teste', provider: 'vagalume', limit: 3 });
         assert.equal(vagalumeSearch.status, 200);
         assert.equal(vagalumeSearch.body.data[0]?.source, 'vagalume');
+        assert.match(vagalumeSearch.body.data[0]?.preview || '', /esperança/i);
         const vagalumeGet = await handleApiRequest('/api/proxy/lyrics/get', 'POST', { 'x-forwarded-for': 'selftest-vagalume-web-get' }, { ...vagalumeSearch.body.data[0], provider: 'vagalume' });
         assert.equal(vagalumeGet.status, 200);
         assert.match(vagalumeGet.body.data.fullLyrics, /adoração/i);
@@ -162,7 +169,7 @@ async function main() {
         clearCache();
         resetProviderHealth();
     }
-    console.log('PROXY_SELF_TEST_OK: GLX 3.1 + health/provider modes + biblioteca local + Letras + Genius web + Vagalume web/API fallback + custom');
+    console.log('PROXY_SELF_TEST_OK: GLX 3.1 + busca por título/artista/trecho + capas/metadados + biblioteca local + Letras + Genius + Vagalume + custom');
 }
 main().catch(error => {
     console.error('PROXY_SELF_TEST_FAILED', error);

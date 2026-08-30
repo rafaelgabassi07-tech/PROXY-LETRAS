@@ -1,4 +1,4 @@
-# Proxy 2.7.4 — deploy compatível com Vercel
+# Proxy 2.9.0 — deploy compatível com Vercel
 
 Esta revisão não apaga arquivos durante o build. Todas as rotas públicas possuem Functions `.js` físicas e leves que delegam ao `api/index.js`.
 

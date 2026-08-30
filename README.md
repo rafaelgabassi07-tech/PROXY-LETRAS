@@ -1,4 +1,4 @@
-# Gospel Lyrics Proxy 2.7.4
+# Gospel Lyrics Proxy 2.9.0
 
 Produção Vercel consolidada em uma única Function (`api/index.js`) com limpeza automática de rotas legadas no build.
 
@@ -33,6 +33,8 @@ Backend privado para a aba **Letras** do Harpa & Bíblia. Ele centraliza busca, 
 ## Recursos
 
 - busca multi-provider com biblioteca local + Letras.mus.br + Vagalume + Genius;
+- busca refinada por **título, artista ou trecho da letra**, com variantes de consulta, similaridade textual, validação limitada da letra completa e reranking por intenção;
+- resultados duplicados de provedores diferentes são fundidos para aproveitar o melhor título/URL junto com **álbum, capa e trecho relevante** de outras fontes;
 - Vagalume e Genius continuam operacionais por fallback web quando não há credencial; as APIs são caminhos preferenciais quando configuradas;
 - endpoint customizado opcional;
 - GLX Extraction Engine 3.1 com ensemble multi-parser/multi-estratégia, dados estruturados, hydration state, análise estrutural, blocos contextuais e resgate adaptativo;

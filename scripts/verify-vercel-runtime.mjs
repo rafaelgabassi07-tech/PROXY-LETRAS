@@ -43,8 +43,16 @@ if (config.buildCommand !== 'echo GLX_NO_BUILD_REQUIRED') failures.push('buildCo
 if ('rewrites' in config) failures.push('No rewrites: physical compatibility Functions handle API routes');
 if ('functions' in config) failures.push('No manual functions map');
 const pkg = JSON.parse(fs.readFileSync(path.join(root,'package.json'),'utf8'));
-if (pkg.version !== '2.7.4') failures.push(`Expected 2.7.4, got ${pkg.version}`);
+if (pkg.version !== '2.9.0') failures.push(`Expected 2.9.0, got ${pkg.version}`);
 if (pkg.scripts?.build) failures.push('package.json must not run a destructive build script');
 if (!fs.existsSync(path.join(root,'public/index.html'))) failures.push('Missing public/index.html');
+const serviceText = fs.readFileSync(path.join(root, 'server/lyricsService.js'), 'utf8');
+const scraperText = fs.readFileSync(path.join(root, 'server/scrapers.js'), 'utf8');
+for (const required of ['buildRemoteQueries', 'verifyExcerptCandidates', 'fanOutResolvedSongs', 'resolveVagalumeCandidateUrls', 'lyricsMatchQuality', 'sameSongConfidence', 'songMatchesRequest', 'mergeResultMetadata', 'diceSimilarity', 'search-v4', 'imageUrl']) {
+  if (!serviceText.includes(required)) failures.push(`Missing search refinement in lyricsService.js: ${required}`);
+}
+for (const required of ['song_art_image_thumbnail_url', 'highlights', 'pageStructuredMedia', 'searchCardContext', 'discoveryOnly', 'Nunca inventa /artista/titulo.html']) {
+  if (!scraperText.includes(required)) failures.push(`Missing provider metadata extraction in scrapers.js: ${required}`);
+}
 if (failures.length) { console.error(failures.join('\n')); process.exit(1); }
 console.log(`VERCEL_COMPAT_FUNCTIONS_OK: ${expectedApi.length} API handlers; zero TypeScript; no destructive build; all relative imports resolved`);
