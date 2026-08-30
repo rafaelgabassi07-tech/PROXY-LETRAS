@@ -1,4 +1,4 @@
-# Deploy no Vercel — Proxy 2.10.0
+# Deploy no Vercel — Proxy 2.10.1
 
 ## Estrutura atual
 
@@ -10,7 +10,7 @@ O health continua com caminho leve. Busca e obtenção de letra carregam o runti
 
 O runtime remoto usa somente **Letras.mus.br + Vagalume**. O valor `multi-provider` permanece no contrato HTTP para compatibilidade, mas significa roteamento adaptativo entre essas duas fontes:
 
-- título/artista: Letras primeiro; Vagalume somente se necessário;
+- título/artista/trecho: Vagalume `search.excerpt` primeiro; Letras somente como fallback;
 - trecho: Vagalume `search.excerpt` primeiro; Letras somente se necessário;
 - a listagem não abre páginas completas de letras;
 - a hidratação da letra completa ocorre em `/api/proxy/lyrics/get` após o usuário selecionar um resultado.
@@ -39,3 +39,8 @@ Faça o deploy da pasta raiz deste Proxy, mantendo `api/`, `server/`, `public/`,
 4. Repita com um trecho claro de 5+ palavras → o Vagalume deve ser a fonte primária; a busca não deve abrir uma página de letra completa.
 5. Abra um resultado em `POST /api/proxy/lyrics/get` e confirme `fullLyrics` não vazio.
 6. Simule falha/resultado vazio da fonte primária e confirme que apenas então a segunda fonte aparece em `providersUsed`.
+
+
+### Após publicar 2.10.1
+
+Não é necessário limpar manualmente o cache antigo: a chave de busca mudou para `search-v7-resilient`. Para confirmar a correção, um log de busca válida deve mostrar `cacheStatus:"stored"` na primeira consulta e `cacheStatus:"hit"` nas seguintes. Se as fontes falharem, o log deve mostrar HTTP 503, `cached:false` e `cacheStatus:"bypass-partial"`; esse resultado jamais deve virar cache hit.

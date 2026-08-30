@@ -46,14 +46,16 @@ async function main() {
 
     const originalFetch = globalThis.fetch;
     const calls = [];
+    let forceVagalumeEmpty = false;
+    let forceUpstreamFailure = false;
     try {
         globalThis.fetch = async (input) => {
             const url = String(input);
             calls.push(url);
             if (url.includes('letras.mus.br') && (url.includes('?q=') || url.includes('/buscar/') || url.includes('/busca/'))) {
-                if (decodeURIComponent(url).toLowerCase().includes('sem resultado letras')) {
-                    return new Response('<html><body>Nenhum resultado</body></html>', { status: 200, headers: { 'content-type': 'text/html; charset=utf-8' } });
-                }
+                const decoded = decodeURIComponent(url).toLowerCase();
+                if (forceUpstreamFailure && decoded.includes('falha temporaria'))
+                    throw new Error('HTTP 503');
                 return new Response(LETRAS_RESULT_HTML, { status: 200, headers: { 'content-type': 'text/html; charset=utf-8' } });
             }
             if (url === 'https://www.letras.mus.br/ministerio-teste/cancao-da-graca/') {
@@ -61,10 +63,19 @@ async function main() {
             }
             if (url.includes('api.vagalume.com.br/search.excerpt')) {
                 const query = decodeURIComponent(new URL(url).searchParams.get('q') || '');
-                if (query.toLowerCase().includes('sem resultado letras')) {
+                const normalizedQuery = query.toLowerCase();
+                if (forceUpstreamFailure && normalizedQuery.includes('falha temporaria'))
+                    throw new Error('HTTP 503');
+                if (forceVagalumeEmpty)
+                    return new Response(JSON.stringify({ response: { docs: [] } }), { status: 200, headers: { 'content-type': 'application/json' } });
+                if (normalizedQuery.includes('falha temporaria')) {
                     return new Response(JSON.stringify({ response: { docs: [{
-                        id: 'vg-fallback', title: 'Sem Resultado Letras', band: 'Ministério Teste',
-                        snippet: 'Sem Resultado Letras'
+                        id: 'vg-recovered', title: 'Falha Temporaria', band: 'Ministério Teste', snippet: 'Falha Temporaria'
+                    }] } }), { status: 200, headers: { 'content-type': 'application/json' } });
+                }
+                if (normalizedQuery.includes('canção da graça') || normalizedQuery.includes('cancao da graca')) {
+                    return new Response(JSON.stringify({ response: { docs: [{
+                        id: 'vg-graca', title: 'Canção da Graça', band: 'Ministério Teste', snippet: 'Canção da Graça'
                     }] } }), { status: 200, headers: { 'content-type': 'application/json' } });
                 }
                 return new Response(JSON.stringify({ response: { docs: [{
@@ -82,22 +93,31 @@ async function main() {
                 return new Response(VAGALUME_SONG_HTML.replaceAll('Canção Vagalume', 'Sem Resultado Letras'), { status: 200, headers: { 'content-type': 'text/html; charset=utf-8' } });
             }
             if (url.includes('vagalume.com.br/search/')) {
+                if (forceUpstreamFailure && decodeURIComponent(url).toLowerCase().includes('falha temporaria'))
+                    throw new Error('HTTP 503');
                 return new Response('<html><body>Carregando...</body></html>', { status: 200, headers: { 'content-type': 'text/html; charset=utf-8' } });
             }
             throw new Error(`URL remota inesperada no self-test: ${url}`);
         };
 
-        // Título/artista: Letras é a fonte primária e Vagalume não deve ser chamado quando há acerto forte.
+        // Título/artista: o índice JSON do Vagalume é a primeira fonte e Letras não é
+        // consultado quando há candidato forte.
         const titleSearch = await handleApiRequest('/api/proxy/lyrics/search', 'POST', { 'x-forwarded-for': 'selftest-title' }, { query: 'Canção da Graça', provider: 'multi-provider', limit: 5 });
         assert.equal(titleSearch.status, 200);
         assert.equal(titleSearch.body.provider, 'dual-source');
-        assert.equal(titleSearch.body.data[0]?.source, 'letras_mus_br');
-        assert.deepEqual(titleSearch.body.providersUsed, ['letras_mus_br']);
-        assert.equal(calls.some(url => url.includes('api.vagalume.com.br/search.excerpt')), false);
+        assert.equal(titleSearch.body.data[0]?.source, 'vagalume');
+        assert.deepEqual(titleSearch.body.providersUsed, ['vagalume']);
+        assert.equal(titleSearch.body.cached, false);
+        assert.equal(titleSearch.body.cacheStatus, 'stored');
+        assert.equal(calls.some(url => url.includes('letras.mus.br')), false);
 
-        const titleGet = await handleApiRequest('/api/proxy/lyrics/get', 'POST', { 'x-forwarded-for': 'selftest-title-get' }, { ...titleSearch.body.data[0], provider: titleSearch.body.data[0].source });
-        assert.equal(titleGet.status, 200);
-        assert.match(titleGet.body.data.fullLyrics, /Refrão/);
+        // Resultado válido é cacheável e pode ser reutilizado.
+        const callsAfterFirstTitle = calls.length;
+        const titleCached = await handleApiRequest('/api/proxy/lyrics/search', 'POST', { 'x-forwarded-for': 'selftest-title-cache' }, { query: 'Canção da Graça', provider: 'multi-provider', limit: 5 });
+        assert.equal(titleCached.status, 200);
+        assert.equal(titleCached.body.cached, true);
+        assert.equal(titleCached.body.cacheStatus, 'hit');
+        assert.equal(calls.length, callsAfterFirstTitle);
 
         // Trecho: Vagalume usa o índice full-text e não abre página de letra durante a listagem.
         calls.length = 0;
@@ -113,15 +133,43 @@ async function main() {
         assert.equal(excerptGet.status, 200);
         assert.match(excerptGet.body.data.fullLyrics, /adoração/i);
 
-        // Fallback: só consulta a segunda fonte quando a primária não entrega candidato forte.
+        // Fallback: Letras só é consultado quando o Vagalume não traz candidato.
         clearCache();
+        resetProviderHealth();
         calls.length = 0;
-        const fallbackSearch = await handleApiRequest('/api/proxy/lyrics/search', 'POST', { 'x-forwarded-for': 'selftest-fallback' }, { query: 'Sem Resultado Letras', provider: 'multi-provider', limit: 4 });
+        forceVagalumeEmpty = true;
+        const fallbackSearch = await handleApiRequest('/api/proxy/lyrics/search', 'POST', { 'x-forwarded-for': 'selftest-fallback' }, { query: 'Canção da Graça', provider: 'multi-provider', limit: 4 });
+        forceVagalumeEmpty = false;
         assert.equal(fallbackSearch.status, 200);
         assert.ok(fallbackSearch.body.data.length > 0);
-        assert.deepEqual(fallbackSearch.body.providersUsed, ['letras_mus_br', 'vagalume']);
-        assert.ok(calls.some(url => url.includes('letras.mus.br')));
+        assert.equal(fallbackSearch.body.data[0]?.source, 'letras_mus_br');
+        assert.deepEqual(fallbackSearch.body.providersUsed, ['vagalume', 'letras_mus_br']);
         assert.ok(calls.some(url => url.includes('api.vagalume.com.br/search.excerpt')));
+        assert.ok(calls.some(url => url.includes('letras.mus.br')));
+
+        // Regressão do log real: falha parcial + zero resultado nunca pode ser cacheada nem
+        // mascarada como 200. A repetição deve consultar os upstreams novamente.
+        clearCache();
+        resetProviderHealth();
+        calls.length = 0;
+        forceUpstreamFailure = true;
+        const failedSearch = await handleApiRequest('/api/proxy/lyrics/search', 'POST', { 'x-forwarded-for': 'selftest-poison-cache' }, { query: 'Falha Temporaria', provider: 'multi-provider', limit: 4 });
+        assert.equal(failedSearch.status, 503);
+        assert.equal(failedSearch.body.code, 'UPSTREAM_UNAVAILABLE');
+        assert.equal(failedSearch.body.cached, false);
+        assert.equal(failedSearch.body.cacheStatus, 'bypass-partial');
+        assert.equal(failedSearch.body.count, 0);
+        const failureCalls = calls.length;
+        assert.ok(failureCalls > 0);
+
+        forceUpstreamFailure = false;
+        resetProviderHealth();
+        const recoveredSearch = await handleApiRequest('/api/proxy/lyrics/search', 'POST', { 'x-forwarded-for': 'selftest-poison-recovery' }, { query: 'Falha Temporaria', provider: 'multi-provider', limit: 4 });
+        assert.equal(recoveredSearch.status, 200);
+        assert.equal(recoveredSearch.body.cached, false);
+        assert.equal(recoveredSearch.body.cacheStatus, 'stored');
+        assert.ok(recoveredSearch.body.count > 0);
+        assert.ok(calls.length > failureCalls);
     }
     finally {
         globalThis.fetch = originalFetch;
@@ -130,7 +178,7 @@ async function main() {
         resetProviderHealth();
     }
 
-    console.log('PROXY_SELF_TEST_OK: GLX + dual-source adaptativo + Letras (título/artista) + Vagalume (trecho/fallback) + cache + recuperação exata');
+    console.log('PROXY_SELF_TEST_OK: GLX + Vagalume index-first + Letras fallback + cache resiliente + 503 upstream + recuperação exata');
 }
 
 main().catch(error => {

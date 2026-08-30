@@ -1,4 +1,4 @@
-# Gospel Lyrics Proxy 2.10.0
+# Gospel Lyrics Proxy 2.10.1
 
 Produção Vercel consolidada em uma única Function (`api/index.js`) com limpeza automática de rotas legadas no build.
 
@@ -31,7 +31,7 @@ Backend privado para a aba **Letras** do Harpa & Bíblia. Ele centraliza busca, 
 ## Recursos
 
 - fluxo remoto enxuto com apenas **Letras.mus.br + Vagalume**, além da biblioteca local;
-- roteamento adaptativo: **Letras primeiro para título/artista** e **Vagalume primeiro para trecho**; o segundo provedor só é acionado quando o primeiro não entrega um candidato forte;
+- roteamento adaptativo: **Vagalume `search.excerpt` primeiro para título, artista e trecho**; Letras é fallback quando o índice estruturado não entrega um candidato forte;
 - busca refinada por **título, artista ou trecho da letra**, sem abrir páginas completas de letras durante a listagem;
 - Vagalume usa `search.excerpt` sem credencial para descoberta por trecho e API oficial quando `VAGALUME_API_KEY` estiver configurada;
 - a letra completa é hidratada somente após a seleção do resultado, reduzindo latência e carga externa;
@@ -98,3 +98,13 @@ O backend de produção é roteado por arquivos TypeScript dentro de `api/`. Nã
 ## Vercel Output Directory
 
 Use `public`. The build creates `public/index.html` explicitly, while API routes continue through `api/index.js`.
+
+
+## Correção 2.10.1 — cache resiliente
+
+- buscas com `partial:true` nunca são gravadas no cache;
+- buscas vazias (`count:0`) nunca são gravadas no cache;
+- a chave de busca foi migrada para `search-v7-resilient`, invalidando entradas antigas;
+- `partial:true + count:0` retorna `503 UPSTREAM_UNAVAILABLE` com `Retry-After: 2`;
+- logs incluem `cacheStatus`, `providersUsed`, `providersSkipped`, `providerErrors` e `upstreamLatencyMs`;
+- Vagalume é a rota primária estruturada; Letras fica como fallback de cobertura.

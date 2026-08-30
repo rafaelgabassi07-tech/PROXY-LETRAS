@@ -246,6 +246,11 @@ export function recordLog(log) {
         cached: newLog.cached,
         partial: newLog.partial,
         resultCount: newLog.resultCount,
+        cacheStatus: newLog.cacheStatus,
+        providersUsed: newLog.providersUsed,
+        providersSkipped: newLog.providersSkipped,
+        providerErrors: newLog.providerErrors,
+        upstreamLatencyMs: newLog.upstreamLatencyMs,
         extractionMethod: newLog.extractionMethod,
         error: newLog.error,
     }, 'proxy_request');
@@ -353,24 +358,56 @@ export async function handleApiRequest(url, method, headers, body) {
             }
             const result = await searchGospelSongs(queryParams);
             const latency = Date.now() - startTime;
+            // Zero resultado + execução parcial significa indisponibilidade upstream, não uma
+            // busca válida sem correspondências. Não mascara o problema como HTTP 200.
+            const upstreamUnavailable = result.total === 0 && Boolean(result.partial);
+            const status = upstreamUnavailable ? 503 : 200;
             recordLog({
                 method: normalizedMethod,
                 path: pathname,
                 targetProvider: result.provider,
-                status: 200,
+                status,
                 latencyMs: latency,
+                upstreamLatencyMs: result.durationMs,
                 ip: requestIp(headers),
                 requestId,
                 queryParam: truncateLogValue({ ...queryParams }),
                 cached: result.cached,
+                cacheStatus: result.cacheStatus,
                 partial: result.partial,
                 providersUsed: result.providersUsed,
+                providersSkipped: result.providersSkipped,
+                providerErrors: result.providerErrors,
                 resultCount: result.total,
             });
+            if (upstreamUnavailable) {
+                responseHeaders['Retry-After'] = '2';
+                return {
+                    status,
+                    headers: responseHeaders,
+                    body: {
+                        success: false,
+                        code: 'UPSTREAM_UNAVAILABLE',
+                        retryable: true,
+                        error: 'As fontes de letras não responderam a tempo. Tente novamente.',
+                        query: queryParams,
+                        count: 0,
+                        provider: result.provider,
+                        providersUsed: result.providersUsed || [],
+                        providersSkipped: result.providersSkipped || [],
+                        providerErrors: result.providerErrors || [],
+                        cached: false,
+                        cacheStatus: result.cacheStatus,
+                        partial: true,
+                        latencyMs: latency,
+                        data: [],
+                    },
+                };
+            }
             return {
-                status: 200,
+                status,
                 headers: responseHeaders,
-                body: { success: true, query: queryParams, count: result.total, provider: result.provider, providersUsed: result.providersUsed || [], cached: result.cached, partial: Boolean(result.partial), latencyMs: latency, data: result.results },
+                body: { success: true, query: queryParams, count: result.total, provider: result.provider, providersUsed: result.providersUsed || [], providersSkipped: result.providersSkipped || [], providerErrors: result.providerErrors || [], cached: result.cached, cacheStatus: result.cacheStatus, partial: Boolean(result.partial), latencyMs: latency, data: result.results },
             };
         }
         if (pathname === '/api/proxy/lyrics/get' && normalizedMethod === 'POST') {

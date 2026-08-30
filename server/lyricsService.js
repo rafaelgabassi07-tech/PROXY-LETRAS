@@ -13,7 +13,7 @@ const memoryCache = new LRUCache({
     updateAgeOnGet: true,
 });
 const providerHealth = new Map();
-const DEFAULT_SEARCH_BUDGET_MS = 5200;
+const DEFAULT_SEARCH_BUDGET_MS = 5800;
 const DEFAULT_GET_BUDGET_MS = 8500;
 function searchBudgetMs() {
     const configured = Number(process.env.LYRICS_SEARCH_BUDGET_MS || DEFAULT_SEARCH_BUDGET_MS);
@@ -31,6 +31,20 @@ function getBudgetMs() {
 }
 function cacheKey(prefix, value) {
     return `${prefix}:${JSON.stringify(value)}`;
+}
+function reusableSearchCacheEntry(value) {
+    return Boolean(value && Array.isArray(value.results) && Number(value.total) > 0 && value.partial !== true);
+}
+function providerErrorCode(error) {
+    const message = String(error instanceof Error ? error.message : error || '').toLowerCase();
+    const name = String(error instanceof Error ? error.name : '').toLowerCase();
+    if (name.includes('timeout') || name.includes('abort') || message.includes('tempo limite') || message.includes('timeout')) return 'TIMEOUT';
+    const http = message.match(/http\s+(\d{3})/i);
+    if (http) return `HTTP_${http[1]}`;
+    if (message.includes('getaddrinfo') || message.includes('dns') || message.includes('name resolution')) return 'DNS';
+    if (message.includes('json')) return 'INVALID_JSON';
+    if (message.includes('host não autorizado') || message.includes('host nao autorizado')) return 'HOST_REJECTED';
+    return 'UPSTREAM_ERROR';
 }
 export function getFromCache(key) {
     const config = getProxyConfig();
@@ -548,10 +562,13 @@ export async function searchGospelSongs(params) {
         provider: String(params.provider || '').trim(),
         limit,
     };
-    const key = cacheKey('search-v6-dual', normalizedParams);
+    const key = cacheKey('search-v7-resilient', normalizedParams);
     const cached = getFromCache(key);
+    if (cached && reusableSearchCacheEntry(cached))
+        return { ...cached, cached: true, cacheStatus: 'hit' };
+    // Proteção contra entradas antigas/envenenadas: resposta parcial ou vazia nunca é reutilizada.
     if (cached)
-        return { ...cached, cached: true };
+        memoryCache.delete(key);
 
     const config = getProxyConfig();
     const requestedProvider = normalizedParams.provider || config.defaultProvider;
@@ -566,6 +583,8 @@ export async function searchGospelSongs(params) {
     const deadline = startedAt + searchBudgetMs();
     let partial = false;
     const providersUsed = [];
+    const providersSkipped = [];
+    const providerErrors = [];
 
     const excerptCandidateMatches = (result) => {
         if (!excerptMode || !normalizedParams.query)
@@ -587,7 +606,7 @@ export async function searchGospelSongs(params) {
     });
 
     const runLetras = async (budgetMs) => {
-        if (!budgetMs || !config.providers.letrasMusBr.enabled || !providerAvailable('letras_mus_br'))
+        if (!budgetMs || !config.providers.letrasMusBr.enabled)
             return [];
         return searchVariants(
             queryVariants,
@@ -603,7 +622,7 @@ export async function searchGospelSongs(params) {
     };
 
     const runVagalume = async (budgetMs) => {
-        if (!budgetMs || !config.providers.vagalume.enabled || !providerAvailable('vagalume'))
+        if (!budgetMs || !config.providers.vagalume.enabled)
             return [];
         const providerDeadline = Date.now() + budgetMs;
         const primaryQuery = queryVariants[0] || query;
@@ -640,16 +659,32 @@ export async function searchGospelSongs(params) {
 
     if (query && desiredProvider !== 'built-in' && desiredProvider !== 'database') {
         // Fluxo adaptativo de duas fontes:
-        // - título/artista: Letras primeiro;
-        // - trecho: índice full-text do Vagalume primeiro;
+        // - título/artista e trecho: índice JSON do Vagalume primeiro;
+        // - Letras: fallback quando o índice não entregar candidato forte;
         // O segundo provedor só é consultado se o primeiro não produzir um candidato forte.
         const providerPlan = desiredProvider === 'multi-provider'
-            ? (excerptMode ? ['vagalume', 'letras_mus_br'] : ['letras_mus_br', 'vagalume'])
+            // O índice JSON do Vagalume é mais barato/estável que scraping HTML e também
+            // retorna título + artista. Letras fica como fallback de cobertura.
+            ? ['vagalume', 'letras_mus_br']
             : [desiredProvider];
 
         for (const provider of providerPlan) {
-            const budgetMs = remainingBudget(deadline, provider === providerPlan[0] ? 2900 : 1900);
+            const enabled = provider === 'vagalume'
+                ? config.providers.vagalume.enabled
+                : config.providers.letrasMusBr.enabled;
+            if (!enabled) {
+                providersSkipped.push({ provider, reason: 'DISABLED' });
+                partial = true;
+                continue;
+            }
+            if (!providerAvailable(provider)) {
+                providersSkipped.push({ provider, reason: 'CIRCUIT_OPEN' });
+                partial = true;
+                continue;
+            }
+            const budgetMs = remainingBudget(deadline, provider === providerPlan[0] ? 2700 : 2500);
             if (!budgetMs) {
+                providersSkipped.push({ provider, reason: 'BUDGET_EXHAUSTED' });
                 partial = true;
                 break;
             }
@@ -665,9 +700,10 @@ export async function searchGospelSongs(params) {
                 if (desiredProvider === 'multi-provider' && strongEnough(batch))
                     break;
             }
-            catch {
+            catch (error) {
                 providerFailed(provider);
                 providersUsed.push(provider);
+                providerErrors.push({ provider, code: providerErrorCode(error) });
                 partial = true;
             }
         }
@@ -679,11 +715,20 @@ export async function searchGospelSongs(params) {
         total: merged.length,
         provider: desiredProvider === 'multi-provider' ? 'dual-source' : desiredProvider,
         providersUsed,
+        providersSkipped,
+        providerErrors,
         partial,
         durationMs: Date.now() - startedAt,
     };
-    setInCache(key, response, 'search');
-    return { ...response, cached: false };
+    // Nunca cacheia falha parcial nem resultado vazio. Isso evita o padrão
+    // cached:true + partial:true + resultCount:0 observado na Vercel.
+    const cacheable = reusableSearchCacheEntry(response);
+    if (cacheable)
+        setInCache(key, response, 'search');
+    else
+        memoryCache.delete(key);
+    const cacheStatus = cacheable ? 'stored' : (partial ? 'bypass-partial' : 'bypass-empty');
+    return { ...response, cached: false, cacheStatus };
 }
 function localSong(params) {
     if (params.id) {
