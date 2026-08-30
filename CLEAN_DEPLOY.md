@@ -1,4 +1,4 @@
-# Proxy 2.11.1 — deploy limpo no Vercel
+# Proxy 2.11.2 — deploy limpo no Vercel
 
 Esta revisão não apaga arquivos durante o build. Todas as rotas públicas possuem Functions `.js` físicas e leves que delegam ao `api/index.js`.
 

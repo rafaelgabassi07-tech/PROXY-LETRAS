@@ -1,4 +1,4 @@
-# Deploy no Vercel — Proxy 2.11.1
+# Deploy no Vercel — Proxy 2.11.2
 
 ## Estrutura
 
@@ -22,11 +22,11 @@ Letras.mus.br foi removido do runtime de busca porque as rotas de pesquisa usada
 
 ## Cache
 
-A versão 2.11.1 usa o namespace `search-v9-catalog-resolver`. Isso invalida automaticamente respostas produzidas pelas estratégias v6/v7/v8. Resultados vazios ou parciais nunca são armazenados.
+A versão 2.11.2 usa o namespace `search-v10-artwork-enrichment`. Isso invalida automaticamente respostas produzidas pelas estratégias v6/v7/v8. Resultados vazios ou parciais nunca são armazenados.
 
 ## Smoke tests pós-deploy
 
-1. `GET /api/health` → HTTP 200, versão `2.11.1`, `activeProviders` contendo `database`, `lrclib`, `vagalume`.
+1. `GET /api/health` → HTTP 200, versão `2.11.2`, `activeProviders` contendo `database`, `lrclib`, `vagalume`.
 2. Pesquise **nome de música** em `POST /api/proxy/lyrics/search`. O caminho normal deve mostrar `providersUsed:["lrclib"]` quando houver candidato forte.
 3. Pesquise **nome de artista**. Deve retornar músicas sem exigir página/slug adivinhado.
 4. Pesquise um **trecho claro de 5+ palavras**. O Vagalume deve aparecer primeiro em `providersUsed`.
@@ -40,3 +40,7 @@ A versão 2.11.1 usa o namespace `search-v9-catalog-resolver`. Isso invalida aut
 - `status:200, partial:true, resultCount>0`: resultado útil com uma fonte degradada; não cacheado.
 - `status:200, partial:true, resultCount:0`: pelo menos uma fonte concluiu, mas o conjunto ficou incompleto; o APK 2.11 repete uma vez automaticamente.
 - `status:503, providersCompleted:[]`: nenhuma fonte remota concluiu; `Retry-After: 2` e sem cache.
+
+## Verificação de capa/álbum na 2.11.2
+
+A 2.11.2 invalida o cache de busca anterior e enriquece resultados LRCLIB com metadados visuais do próprio Vagalume. No log de `/api/proxy/lyrics/search`, `mediaEnrichedCount > 0` e `mediaProvider: "vagalume"` confirmam que capa/álbum foram completados. A ausência temporária de metadados visuais não converte uma busca válida em erro/partial.

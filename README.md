@@ -1,4 +1,4 @@
-# Gospel Lyrics Proxy 2.11.1
+# Gospel Lyrics Proxy 2.11.2
 
 Backend privado da página **Letras** do Harpa & Bíblia, otimizado para Vercel Functions e para uma única caixa de busca capaz de receber título, artista ou trecho da letra.
 
@@ -20,7 +20,7 @@ A biblioteca local do Proxy permanece como fallback determinístico e não conta
 - A listagem não abre páginas completas de letras.
 - A letra completa é carregada somente após o toque em um resultado.
 - Resposta `partial:true` ou `count:0` não entra no cache.
-- Cache de busca atual: `search-v9-catalog-resolver`.
+- Cache de busca atual: `search-v10-artwork-enrichment`.
 - `503 UPSTREAM_UNAVAILABLE` só é emitido se nenhum provedor remoto concluir.
 
 ## Diagnóstico de logs
@@ -74,4 +74,9 @@ npm run test:catalog-routing
 
 ## GLX Extraction Engine 3.1
 
-O GLX continua disponível para fallbacks web do Vagalume e recuperação de páginas, com parse5/htmlparser2, dados estruturados, análise de densidade textual, validação de redirects/hosts, limite de corpo em streaming e diagnóstico de qualidade. Ele não é usado para descobrir título no caminho primário da 2.11.1; essa função agora pertence ao catálogo JSON.
+O GLX continua disponível para fallbacks web do Vagalume e recuperação de páginas, com parse5/htmlparser2, dados estruturados, análise de densidade textual, validação de redirects/hosts, limite de corpo em streaming e diagnóstico de qualidade. Ele não é usado para descobrir título no caminho primário da 2.11.2; essa função agora pertence ao catálogo JSON.
+
+
+## Metadados visuais
+
+A busca usa LRCLIB para descoberta estruturada e Vagalume para complementar capa/álbum. O enriquecimento prioriza a discografia do Vagalume e usa a imagem do artista apenas como fallback, sem adicionar uma terceira fonte.

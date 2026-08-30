@@ -6,7 +6,7 @@
 import { LRUCache } from 'lru-cache';
 import { GOSPEL_DATABASE } from './gospelDatabase.js';
 import { getProxyConfig } from './proxyConfig.js';
-import { fetchLrclibSong, fetchScrapedSong, fetchVagalumeSong, searchLrclib, searchVagalumeArtistPage, searchVagalumeExcerpt, searchVagalumeWeb, } from './scrapers.js';
+import { fetchLrclibSong, fetchScrapedSong, fetchVagalumeSong, fetchVagalumeTrackMetadata, searchLrclib, searchVagalumeArtistPage, searchVagalumeExcerpt, searchVagalumeWeb, } from './scrapers.js';
 const memoryCache = new LRUCache({
     max: 5000,
     ttlAutopurge: true,
@@ -564,7 +564,7 @@ export async function searchGospelSongs(params) {
         provider: String(params.provider || '').trim(),
         limit,
     };
-    const key = cacheKey('search-v9-catalog-resolver', normalizedParams);
+    const key = cacheKey('search-v10-artwork-enrichment', normalizedParams);
     const cached = getFromCache(key);
     if (cached && reusableSearchCacheEntry(cached))
         return { ...cached, cached: true, cacheStatus: 'hit' };
@@ -755,7 +755,58 @@ export async function searchGospelSongs(params) {
         }
     }
 
-    const merged = dedupeResults(results, normalizedParams, limit);
+    let merged = dedupeResults(results, normalizedParams, limit);
+    let mediaEnrichedCount = 0;
+    let mediaProvider = null;
+    // LRCLIB não expõe capa. Quando a busca já encontrou a música, usa o próprio Vagalume
+    // (segunda e única outra fonte ativa) somente para completar capa/álbum dos primeiros resultados.
+    // A falha de mídia nunca derruba nem marca como parcial uma busca de letras bem-sucedida.
+    if (config.providers.vagalume.enabled && merged.some(item => !item.imageUrl || !item.album)) {
+        const mediaBudget = remainingBudget(deadline, 2300);
+        if (mediaBudget) {
+            const groups = new Map();
+            for (const item of merged.slice(0, Math.min(limit, 10))) {
+                if (item.imageUrl && item.album) continue;
+                const artist = String(item.artist || '').trim();
+                const title = String(item.title || '').trim();
+                if (!artist || !title) continue;
+                const key = normalizeText(artist);
+                if (!groups.has(key) && groups.size >= 3) continue;
+                const group = groups.get(key) || { artist, titles: [] };
+                if (!group.titles.includes(title)) group.titles.push(title);
+                groups.set(key, group);
+            }
+            const enrichments = await Promise.allSettled([...groups.values()].map(async group => ({
+                artist: group.artist,
+                metadata: await fetchVagalumeTrackMetadata(
+                    config.providers.vagalume.webBaseUrl,
+                    config.providers.vagalume.baseUrl,
+                    config.providers.vagalume.apiKey,
+                    group.artist,
+                    group.titles,
+                    mediaBudget
+                ),
+            })));
+            const metadataByArtist = new Map();
+            for (const outcome of enrichments) {
+                if (outcome.status !== 'fulfilled') continue;
+                metadataByArtist.set(normalizeText(outcome.value.artist), outcome.value.metadata);
+            }
+            merged = merged.map(item => {
+                const metadata = metadataByArtist.get(normalizeText(item.artist || ''))?.get(item.title);
+                if (!metadata || (!metadata.imageUrl && !metadata.album)) return item;
+                const next = {
+                    ...item,
+                    album: item.album || metadata.album,
+                    imageUrl: item.imageUrl || metadata.imageUrl,
+                    imageKind: item.imageUrl ? item.imageKind : metadata.imageKind,
+                };
+                if ((!item.imageUrl && next.imageUrl) || (!item.album && next.album)) mediaEnrichedCount += 1;
+                return next;
+            });
+            if (mediaEnrichedCount > 0) mediaProvider = 'vagalume';
+        }
+    }
     const response = {
         results: merged,
         total: merged.length,
@@ -764,6 +815,8 @@ export async function searchGospelSongs(params) {
         providersCompleted,
         providersSkipped,
         providerErrors,
+        mediaEnrichedCount,
+        mediaProvider,
         partial,
         durationMs: Date.now() - startedAt,
     };
@@ -888,13 +941,43 @@ export async function getGospelSongLyrics(params) {
     const lookupLrclib = async (budgetMs) => {
         if (!budgetMs || !config.providers.lrclib.enabled || !providerAvailable('lrclib'))
             return null;
-        return fetchLrclibSong(
+        const providerDeadline = Date.now() + budgetMs;
+        const lyricsBudget = remainingBudget(providerDeadline, 3000);
+        if (!lyricsBudget) return null;
+        const song = await fetchLrclibSong(
             config.providers.lrclib.baseUrl,
             normalized.providerRef || normalized.id,
             normalized.artist,
             normalized.title,
-            Math.min(config.providers.lrclib.timeoutMs, budgetMs)
+            Math.min(config.providers.lrclib.timeoutMs, lyricsBudget)
         );
+        if (!song || (song.imageUrl && song.album) || !config.providers.vagalume.enabled)
+            return song;
+        // Enriquecimento visual best-effort; a letra LRCLIB continua válida mesmo se o
+        // catálogo visual do Vagalume estiver temporariamente indisponível.
+        const mediaBudget = remainingBudget(providerDeadline, 1800);
+        if (!mediaBudget) return song;
+        try {
+            const metadata = await fetchVagalumeTrackMetadata(
+                config.providers.vagalume.webBaseUrl,
+                config.providers.vagalume.baseUrl,
+                config.providers.vagalume.apiKey,
+                song.artist || normalized.artist,
+                [song.title || normalized.title],
+                mediaBudget
+            );
+            const media = metadata.get(song.title || normalized.title);
+            if (!media) return song;
+            return {
+                ...song,
+                album: song.album || media.album,
+                imageUrl: song.imageUrl || media.imageUrl,
+                imageKind: song.imageUrl ? song.imageKind : media.imageKind,
+            };
+        }
+        catch {
+            return song;
+        }
     };
 
     const lookupVagalume = async (budgetMs) => {

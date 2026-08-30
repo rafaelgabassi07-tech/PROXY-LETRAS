@@ -334,6 +334,7 @@ export async function handleApiRequest(url, method, headers, body) {
                     capabilities: [
                         'adaptive-dual-source-search',
                         'lrclib-title-artist-album-search',
+            'vagalume-artwork-enrichment',
                         'vagalume-index-and-artist-page-search',
                         'completion-aware-503',
                         ...extractionEngineCapabilities(),
@@ -390,6 +391,8 @@ export async function handleApiRequest(url, method, headers, body) {
                 providersCompleted: result.providersCompleted,
                 providersSkipped: result.providersSkipped,
                 providerErrors: result.providerErrors,
+                mediaEnrichedCount: result.mediaEnrichedCount || 0,
+                mediaProvider: result.mediaProvider || null,
                 resultCount: result.total,
             });
             if (upstreamUnavailable) {
@@ -409,6 +412,8 @@ export async function handleApiRequest(url, method, headers, body) {
                         providersCompleted: result.providersCompleted || [],
                         providersSkipped: result.providersSkipped || [],
                         providerErrors: result.providerErrors || [],
+                        mediaEnrichedCount: result.mediaEnrichedCount || 0,
+                        mediaProvider: result.mediaProvider || null,
                         cached: false,
                         cacheStatus: result.cacheStatus,
                         partial: true,
@@ -420,7 +425,7 @@ export async function handleApiRequest(url, method, headers, body) {
             return {
                 status,
                 headers: responseHeaders,
-                body: { success: true, query: queryParams, count: result.total, provider: result.provider, providersUsed: result.providersUsed || [], providersCompleted: result.providersCompleted || [], providersSkipped: result.providersSkipped || [], providerErrors: result.providerErrors || [], cached: result.cached, cacheStatus: result.cacheStatus, partial: Boolean(result.partial), latencyMs: latency, data: result.results },
+                body: { success: true, query: queryParams, count: result.total, provider: result.provider, providersUsed: result.providersUsed || [], providersCompleted: result.providersCompleted || [], providersSkipped: result.providersSkipped || [], providerErrors: result.providerErrors || [], mediaEnrichedCount: result.mediaEnrichedCount || 0, mediaProvider: result.mediaProvider || null, cached: result.cached, cacheStatus: result.cacheStatus, partial: Boolean(result.partial), latencyMs: latency, data: result.results },
             };
         }
         if (pathname === '/api/proxy/lyrics/get' && normalizedMethod === 'POST') {

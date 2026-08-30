@@ -67,6 +67,7 @@ export async function healthFetch(request) {
             'lightweight-health-probe',
             'adaptive-dual-source-search',
             'lrclib-title-artist-album-search',
+            'vagalume-artwork-enrichment',
             'vagalume-index-and-artist-page-search',
             'completion-aware-503',
             ...GLX_CAPABILITIES,

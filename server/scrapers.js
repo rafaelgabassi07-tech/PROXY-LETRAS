@@ -534,6 +534,249 @@ export async function searchVagalumeExcerpt(apiBaseUrl, webBaseUrl, query, limit
         };
     }).filter(Boolean).slice(0, limit);
 }
+
+function mediaCandidate(value, baseUrl) {
+    if (typeof value === 'string')
+        return safeMediaUrl(value, baseUrl);
+    if (value && typeof value === 'object') {
+        const record = value;
+        for (const key of ['url', 'src', 'pic_medium', 'picMedium', 'pic', 'image', 'imageUrl', 'cover', 'thumbnail', 'thumb']) {
+            const resolved = safeMediaUrl(record[key], baseUrl);
+            if (resolved) return resolved;
+        }
+    }
+    return undefined;
+}
+function normalizedComparable(value) {
+    return normalizeSearchText(String(value || ''))
+        .replace(/\b(ao vivo|live|acustico|acústico|remaster(?:ed)?|versao|versão|radio edit|single|official|video|clipe)\b/g, ' ')
+        .replace(/\s+/g, ' ')
+        .trim();
+}
+function titleSimilarity(a, b) {
+    const left = normalizedComparable(a);
+    const right = normalizedComparable(b);
+    if (!left || !right) return 0;
+    if (left === right) return 1;
+    if (left.includes(right) || right.includes(left)) return Math.min(left.length, right.length) / Math.max(left.length, right.length);
+    const leftTerms = new Set(left.split(/\s+/).filter(Boolean));
+    const rightTerms = new Set(right.split(/\s+/).filter(Boolean));
+    const intersection = [...leftTerms].filter(term => rightTerms.has(term)).length;
+    return intersection / Math.max(leftTerms.size, rightTerms.size, 1);
+}
+function objectLabel(record) {
+    if (!record || typeof record !== 'object') return '';
+    for (const key of ['albumName', 'album', 'name', 'title', 'desc', 'description']) {
+        const value = record[key];
+        if (typeof value === 'string' && value.trim()) return value.trim();
+        if (value && typeof value === 'object' && typeof value.name === 'string' && value.name.trim()) return value.name.trim();
+    }
+    return '';
+}
+function recordImage(record, baseUrl) {
+    if (!record || typeof record !== 'object') return undefined;
+    for (const key of ['cover', 'coverUrl', 'pic_medium', 'picMedium', 'pic', 'pic_small', 'image', 'imageUrl', 'thumbnail', 'thumb', 'artwork']) {
+        const resolved = mediaCandidate(record[key], baseUrl);
+        if (resolved) return resolved;
+    }
+    return undefined;
+}
+function recordContainsTrack(record, title, depth = 0) {
+    if (!record || depth > 7) return false;
+    const target = normalizedComparable(title);
+    if (!target) return false;
+    if (typeof record === 'string') return titleSimilarity(record, target) >= 0.90;
+    if (Array.isArray(record)) return record.some(value => recordContainsTrack(value, title, depth + 1));
+    if (typeof record !== 'object') return false;
+    for (const [key, value] of Object.entries(record)) {
+        if (['name', 'title', 'mus', 'trackName', 'song', 'songName'].includes(key) && typeof value === 'string' && titleSimilarity(value, title) >= 0.90)
+            return true;
+    }
+    return Object.values(record).some(value => recordContainsTrack(value, title, depth + 1));
+}
+function extractDiscographyMatches(data, titles, baseUrl) {
+    const targets = [...new Set(titles.map(value => String(value || '').trim()).filter(Boolean))];
+    const matches = new Map();
+    const visit = (node, inheritedAlbum = '', inheritedImage, depth = 0) => {
+        if (!node || depth > 9 || matches.size >= targets.length) return;
+        if (Array.isArray(node)) {
+            node.slice(0, 160).forEach(value => visit(value, inheritedAlbum, inheritedImage, depth + 1));
+            return;
+        }
+        if (typeof node !== 'object') return;
+        const label = objectLabel(node);
+        const image = recordImage(node, baseUrl) || inheritedImage;
+        const albumLike = label && !targets.some(title => titleSimilarity(label, title) >= 0.94) ? label : inheritedAlbum;
+        for (const title of targets) {
+            if (matches.has(title)) continue;
+            if ((albumLike || image) && recordContainsTrack(node, title)) {
+                const album = albumLike || inheritedAlbum || undefined;
+                matches.set(title, { album, imageUrl: image });
+            }
+        }
+        for (const value of Object.values(node)) visit(value, albumLike || inheritedAlbum, image, depth + 1);
+    };
+    visit(data);
+    return matches;
+}
+function extractDiscographyHtmlMatches(html, artistSlug, titles, baseUrl) {
+    const targets = [...new Set(titles.map(value => String(value || '').trim()).filter(Boolean))];
+    const matches = new Map();
+    if (!html || !targets.length) return matches;
+    let $;
+    try { $ = load(html, { scriptingEnabled: false }); }
+    catch { return matches; }
+    let currentAlbum = '';
+    let currentImage;
+    const normalizedArtistSlug = String(artistSlug || '').replace(/^\/+|\/+$/g, '').toLowerCase();
+    $('a[href]').each((_index, element) => {
+        if (matches.size >= targets.length) return false;
+        const rawHref = String($(element).attr('href') || '').trim();
+        if (!rawHref) return undefined;
+        let url;
+        try { url = new URL(rawHref, baseUrl); } catch { return undefined; }
+        const path = url.pathname.replace(/\/{2,}/g, '/');
+        const lowerPath = path.toLowerCase();
+        const text = normalizeLyricsText($(element).text().replace(/\s+/g, ' ')).trim();
+        const img = $(element).find('img').first();
+        const imageAlt = normalizeLyricsText(String(img.attr('alt') || img.attr('title') || '')).trim();
+        const rawImage = img.attr('src') || img.attr('data-src') || img.attr('data-lazy-src') || img.attr('data-original');
+
+        // A página pública atual lista a capa imediatamente antes do título/faixas do álbum.
+        // Ex.: /artista/discografia/nome-do-album.webp
+        if (lowerPath.includes(`/${normalizedArtistSlug}/discografia/`) && /\.(?:webp|jpe?g|png|avif)$/i.test(path)) {
+            currentImage = safeMediaUrl(url.toString(), baseUrl) || mediaCandidate(rawImage, baseUrl);
+            if (imageAlt && !/^image$/i.test(imageAlt)) currentAlbum = imageAlt.replace(/^image:\s*/i, '').trim() || currentAlbum;
+            return undefined;
+        }
+        // Link canônico do álbum: /artista/discografia/album.html
+        if (lowerPath.includes(`/${normalizedArtistSlug}/discografia/`) && /\.html$/i.test(path)) {
+            const albumLabel = text || imageAlt;
+            if (albumLabel) {
+                // Se não houve uma capa imediatamente antes deste álbum, não herda a capa
+                // do bloco anterior. Quando a imagem anterior pertence ao mesmo álbum, preserva.
+                if (currentAlbum && normalizedComparable(currentAlbum) !== normalizedComparable(albumLabel)) currentImage = undefined;
+                currentAlbum = albumLabel;
+            }
+            if (!currentImage) currentImage = mediaCandidate(rawImage, baseUrl);
+            return undefined;
+        }
+        // Faixas ficam em /artista/musica.html. Usa o href real e não inventa slug.
+        const parts = path.split('/').filter(Boolean);
+        if (parts.length !== 2 || parts[0].toLowerCase() !== normalizedArtistSlug || !/\.html$/i.test(parts[1]))
+            return undefined;
+        const trackTitle = text.replace(/^\s*\d{1,3}[.)-]?\s*/, '').trim();
+        if (!trackTitle) return undefined;
+        for (const title of targets) {
+            if (matches.has(title) || titleSimilarity(trackTitle, title) < 0.90) continue;
+            matches.set(title, {
+                album: currentAlbum || undefined,
+                imageUrl: currentImage,
+                sourceUrl: url.toString(),
+            });
+        }
+        return undefined;
+    });
+    return matches;
+}
+
+function artistProfileMetadata(data, baseUrl) {
+    const artist = data?.artist || data?.art || data?.band || data;
+    if (!artist || typeof artist !== 'object') return {};
+    const id = String(artist.id || artist.bandID || artist.bandId || '').trim() || undefined;
+    const imageUrl = recordImage(artist, baseUrl) || recordImage(data, baseUrl);
+    return { id, imageUrl };
+}
+function imageApiMetadata(data, baseUrl) {
+    const images = Array.isArray(data?.images) ? data.images : Array.isArray(data?.image) ? data.image : [];
+    for (const entry of images) {
+        const imageUrl = mediaCandidate(entry, baseUrl);
+        if (imageUrl) return { imageUrl };
+    }
+    return {};
+}
+/**
+ * Enriquece músicas usando somente o Vagalume já ativo no Proxy.
+ * Ordem: discografia (capa+álbum exatos) -> perfil/imagens do artista (fallback visual).
+ */
+export async function fetchVagalumeTrackMetadata(webBaseUrl, apiBaseUrl, apiKey, artist, titles, timeoutMs) {
+    const cleanArtist = String(artist || '').trim();
+    const cleanTitles = [...new Set((Array.isArray(titles) ? titles : [titles]).map(value => String(value || '').trim()).filter(Boolean))];
+    if (!cleanArtist || !cleanTitles.length) return new Map();
+    const webBase = webBaseUrl.replace(/\/+$/, '');
+    const apiBase = apiBaseUrl.replace(/\/+$/, '');
+    const webHost = new URL(webBase).hostname;
+    const apiHost = new URL(apiBase).hostname;
+    const slug = slugifySourcePart(cleanArtist);
+    if (!slug) return new Map();
+    const budget = totalBudget(timeoutMs);
+    const output = new Map();
+    let artistImage;
+    let artistId;
+
+    // 1) JSON compacto da discografia quando disponível.
+    try {
+        const discBudget = budget.next(1600);
+        if (discBudget) {
+            const raw = await fetchText(`${webBase}/${slug}/discografia/index.js`, discBudget, { Accept: 'application/json,text/plain,*/*' }, [webHost]);
+            const parsed = JSON.parse(raw);
+            for (const [title, metadata] of extractDiscographyMatches(parsed, cleanTitles, webBase)) output.set(title, metadata);
+        }
+    }
+    catch { /* a página pública abaixo é o fallback estável */ }
+
+    // 2) Página pública de álbuns: é o contrato humano atual do Vagalume e contém
+    // capas, nomes de álbuns e links reais das faixas. Não depende do index.js legado.
+    if (output.size < cleanTitles.length) {
+        try {
+            const htmlBudget = budget.next(1900);
+            if (htmlBudget) {
+                const html = await fetchText(`${webBase}/${slug}/discografia/`, htmlBudget, {}, [webHost]);
+                const htmlMatches = extractDiscographyHtmlMatches(html, slug, cleanTitles.filter(title => !output.has(title)), webBase);
+                for (const [title, metadata] of htmlMatches) output.set(title, metadata);
+            }
+        }
+        catch { /* perfil do artista abaixo ainda fornece fallback visual */ }
+    }
+
+    try {
+        const profileBudget = budget.next(1500);
+        if (profileBudget) {
+            const raw = await fetchText(`${webBase}/${slug}/index.js`, profileBudget, { Accept: 'application/json,text/plain,*/*' }, [webHost]);
+            const parsed = JSON.parse(raw);
+            const profile = artistProfileMetadata(parsed, webBase);
+            artistImage = profile.imageUrl;
+            artistId = profile.id;
+        }
+    }
+    catch { /* image.php abaixo é opcional */ }
+
+    if (!artistImage && artistId && String(apiKey || '').trim()) {
+        try {
+            const imageBudget = budget.next(1300);
+            if (imageBudget) {
+                const url = new URL('/image.php', apiBase);
+                url.searchParams.set('bandID', artistId);
+                url.searchParams.set('limit', '3');
+                url.searchParams.set('apikey', String(apiKey).trim());
+                const raw = await fetchText(url.toString(), imageBudget, { Accept: 'application/json' }, [apiHost]);
+                artistImage = imageApiMetadata(JSON.parse(raw), apiBase).imageUrl;
+            }
+        }
+        catch { /* mantém placeholder local se a galeria estiver indisponível */ }
+    }
+
+    for (const title of cleanTitles) {
+        const current = output.get(title) || {};
+        output.set(title, {
+            album: current.album,
+            imageUrl: current.imageUrl || artistImage,
+            imageKind: current.imageUrl ? 'album' : (artistImage ? 'artist' : undefined),
+        });
+    }
+    return output;
+}
+
 export async function searchVagalumeArtistPage(webBaseUrl, artistOrQuery, limit, timeoutMs) {
     const normalizedBase = webBaseUrl.replace(/\/+$/, '');
     const baseHost = new URL(normalizedBase).hostname;

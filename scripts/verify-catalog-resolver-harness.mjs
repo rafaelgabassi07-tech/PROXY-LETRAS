@@ -67,6 +67,7 @@ const searchVagalumeWeb=async()=>[];
 const fetchLrclibSong=async (_base,ref,artist,title)=>({id:'lrclib-'+(ref||'1'),title:title||'Título',artist:artist||'Artista',fullLyrics:'Linha 1\\nLinha 2',source:'lrclib',sourceUrl:'https://lrclib.net/api/get/'+(ref||'1'),extractionMethod:'api'});
 const fetchScrapedSong=async()=>null;
 const fetchVagalumeSong=async()=>null;
+const fetchVagalumeTrackMetadata=async (_web,_api,_key,artist,titles)=>{ calls.push(['vagalume-media',artist,...titles]); return new Map(titles.map(title=>[title,{album:'Álbum '+title,imageUrl:'https://img.vagalume.test/'+encodeURIComponent(title)+'.jpg',imageKind:'album'}])); };
 `;
 
 const scenario = { name: 'title' };
@@ -87,7 +88,9 @@ try {
   assert.equal(result.total, 1);
   assert.equal(result.results[0].title, 'Ressuscita-me');
   assert.equal(calls[0]?.[0], 'lrclib');
-  assert.equal(calls.some(call => call[0].startsWith('vagalume')), false);
+  assert.ok(calls.some(call => call[0] === 'vagalume-media'));
+  assert.equal(result.results[0].album, 'Álbum Ressuscita-me');
+  assert.ok(result.results[0].imageUrl?.startsWith('https://img.vagalume.test/'));
   console.log('TITLE_SEARCH_PRIMARY_OK');
 
   reset('artist');
