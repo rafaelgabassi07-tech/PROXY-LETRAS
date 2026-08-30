@@ -24,7 +24,7 @@ async function main() {
     assert.equal(health.body.status, 'online');
     assert.deepEqual(health.body.activeProviders, ['database', 'letras_mus_br', 'vagalume']);
     assert.equal(health.body.providerModes.letrasMusBr, 'web-glx');
-    assert.equal(health.body.providerModes.vagalume, 'web-glx');
+    assert.equal(health.body.providerModes.vagalume, 'legacy-index+web-glx-fallback');
     assert.equal(health.body.providerModes.genius, undefined);
     assert.ok(health.body.capabilities.includes('adaptive-dual-source-search'));
     assert.equal(health.body.scraperEngine.name, EXTRACTION_ENGINE_NAME);
@@ -48,13 +48,14 @@ async function main() {
     const calls = [];
     let forceVagalumeEmpty = false;
     let forceUpstreamFailure = false;
+    let forceLetrasFailureOnly = false;
     try {
         globalThis.fetch = async (input) => {
             const url = String(input);
             calls.push(url);
             if (url.includes('letras.mus.br') && (url.includes('?q=') || url.includes('/buscar/') || url.includes('/busca/'))) {
                 const decoded = decodeURIComponent(url).toLowerCase();
-                if (forceUpstreamFailure && decoded.includes('falha temporaria'))
+                if ((forceUpstreamFailure && decoded.includes('falha temporaria')) || (forceLetrasFailureOnly && decoded.includes('sem resultado parcial')))
                     throw new Error('HTTP 503');
                 return new Response(LETRAS_RESULT_HTML, { status: 200, headers: { 'content-type': 'text/html; charset=utf-8' } });
             }
@@ -84,7 +85,7 @@ async function main() {
                 }] } }), { status: 200, headers: { 'content-type': 'application/json' } });
             }
             if (url === 'https://www.vagalume.com.br/ministerio-teste/') {
-                return new Response('<html><body><a href="/ministerio-teste/cancao-vagalume.html">Canção Vagalume</a><a href="/ministerio-teste/sem-resultado-letras.html">Sem Resultado Letras</a></body></html>', { status: 200, headers: { 'content-type': 'text/html; charset=utf-8' } });
+                return new Response('<html><body><h1>Ministério Teste</h1><a href="/ministerio-teste/cancao-vagalume.html">Canção Vagalume</a><a href="/ministerio-teste/sem-resultado-letras.html">Sem Resultado Letras</a></body></html>', { status: 200, headers: { 'content-type': 'text/html; charset=utf-8' } });
             }
             if (url === 'https://www.vagalume.com.br/ministerio-teste/cancao-vagalume.html') {
                 return new Response(VAGALUME_SONG_HTML, { status: 200, headers: { 'content-type': 'text/html; charset=utf-8' } });
@@ -147,6 +148,22 @@ async function main() {
         assert.ok(calls.some(url => url.includes('api.vagalume.com.br/search.excerpt')));
         assert.ok(calls.some(url => url.includes('letras.mus.br')));
 
+        // Um upstream concluiu normalmente sem correspondência e o outro falhou: resposta
+        // degradada continua HTTP 200. Isso corrige o falso 503 observado no runtime.
+        clearCache();
+        resetProviderHealth();
+        calls.length = 0;
+        forceVagalumeEmpty = true;
+        forceLetrasFailureOnly = true;
+        const degradedEmpty = await handleApiRequest('/api/proxy/lyrics/search', 'POST', { 'x-forwarded-for': 'selftest-degraded-empty' }, { query: 'Sem Resultado Parcial', provider: 'multi-provider', limit: 4 });
+        forceVagalumeEmpty = false;
+        forceLetrasFailureOnly = false;
+        assert.equal(degradedEmpty.status, 200);
+        assert.equal(degradedEmpty.body.count, 0);
+        assert.equal(degradedEmpty.body.partial, true);
+        assert.ok(degradedEmpty.body.providersCompleted.includes('vagalume'));
+        assert.equal(degradedEmpty.body.cached, false);
+
         // Regressão do log real: falha parcial + zero resultado nunca pode ser cacheada nem
         // mascarada como 200. A repetição deve consultar os upstreams novamente.
         clearCache();
@@ -178,7 +195,7 @@ async function main() {
         resetProviderHealth();
     }
 
-    console.log('PROXY_SELF_TEST_OK: GLX + Vagalume index-first + Letras fallback + cache resiliente + 503 upstream + recuperação exata');
+    console.log('PROXY_SELF_TEST_OK: GLX + Vagalume index/artist-page + Letras fallback + cache resiliente + 503 completion-aware + recuperação exata');
 }
 
 main().catch(error => {

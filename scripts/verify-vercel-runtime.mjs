@@ -43,15 +43,15 @@ if (config.buildCommand !== 'echo GLX_NO_BUILD_REQUIRED') failures.push('buildCo
 if ('rewrites' in config) failures.push('No rewrites: physical compatibility Functions handle API routes');
 if ('functions' in config) failures.push('No manual functions map');
 const pkg = JSON.parse(fs.readFileSync(path.join(root,'package.json'),'utf8'));
-if (pkg.version !== '2.10.1') failures.push(`Expected 2.10.1, got ${pkg.version}`);
+if (pkg.version !== '2.10.2') failures.push(`Expected 2.10.2, got ${pkg.version}`);
 if (pkg.scripts?.build) failures.push('package.json must not run a destructive build script');
 if (!fs.existsSync(path.join(root,'public/index.html'))) failures.push('Missing public/index.html');
 const serviceText = fs.readFileSync(path.join(root, 'server/lyricsService.js'), 'utf8');
 const scraperText = fs.readFileSync(path.join(root, 'server/scrapers.js'), 'utf8');
-for (const required of ['buildRemoteQueries', 'lyricsMatchQuality', 'sameSongConfidence', 'songMatchesRequest', 'mergeResultMetadata', 'diceSimilarity', 'search-v7-resilient', "['letras_mus_br', 'vagalume']", 'providersUsed', 'providersSkipped', 'providerErrors', 'cacheStatus', 'bypass-partial', 'imageUrl']) {
+for (const required of ['buildRemoteQueries', 'lyricsMatchQuality', 'sameSongConfidence', 'songMatchesRequest', 'mergeResultMetadata', 'diceSimilarity', 'search-v8-upstream-resilient', "['letras_mus_br', 'vagalume']", 'providersUsed', 'providersCompleted', 'providersSkipped', 'providerErrors', 'cacheStatus', 'bypass-partial', 'imageUrl']) {
   if (!serviceText.includes(required)) failures.push(`Missing search refinement in lyricsService.js: ${required}`);
 }
-for (const required of ['pageStructuredMedia', 'searchCardContext', 'Nunca inventa /artista/titulo.html', 'searchVagalumeExcerpt', 'searchLetrasMusBr']) {
+for (const required of ['pageStructuredMedia', 'searchCardContext', 'Nunca inventa /artista/titulo.html', 'searchVagalumeExcerpt', 'searchVagalumeArtistPage', 'searchLetrasMusBr']) {
   if (!scraperText.includes(required)) failures.push(`Missing provider metadata extraction in scrapers.js: ${required}`);
 }
 for (const forbidden of ['searchGenius(', 'searchGeniusWeb(', 'customSearch(', 'customGet(', 'verifyExcerptCandidates(', 'fanOutResolvedSongs(']) {

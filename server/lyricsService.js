@@ -6,14 +6,14 @@
 import { LRUCache } from 'lru-cache';
 import { GOSPEL_DATABASE } from './gospelDatabase.js';
 import { getProxyConfig } from './proxyConfig.js';
-import { fetchScrapedSong, fetchVagalumeSong, searchLetrasMusBr, searchVagalumeExcerpt, searchVagalumeWeb, } from './scrapers.js';
+import { fetchScrapedSong, fetchVagalumeSong, searchLetrasMusBr, searchVagalumeArtistPage, searchVagalumeExcerpt, searchVagalumeWeb, } from './scrapers.js';
 const memoryCache = new LRUCache({
     max: 5000,
     ttlAutopurge: true,
     updateAgeOnGet: true,
 });
 const providerHealth = new Map();
-const DEFAULT_SEARCH_BUDGET_MS = 5800;
+const DEFAULT_SEARCH_BUDGET_MS = 7600;
 const DEFAULT_GET_BUDGET_MS = 8500;
 function searchBudgetMs() {
     const configured = Number(process.env.LYRICS_SEARCH_BUDGET_MS || DEFAULT_SEARCH_BUDGET_MS);
@@ -203,10 +203,12 @@ function providerSucceeded(name) {
 function providerFailed(name) {
     const previous = providerHealth.get(name) || { failures: 0, blockedUntil: 0 };
     const failures = previous.failures + 1;
+    // Uma falha isolada pode ser apenas cold start/DNS/TLS transitório. Não abre o circuito
+    // antes da segunda falha, permitindo que o retry único do APK realmente tente a fonte.
+    const blockMs = failures < 2 ? 0 : Math.min(45_000, (failures - 1) * (failures - 1) * 2200);
     providerHealth.set(name, {
         failures,
-        // Após falhas consecutivas, evita bloquear a UI esperando um provedor indisponível.
-        blockedUntil: Date.now() + Math.min(60_000, failures * failures * 2500),
+        blockedUntil: Date.now() + blockMs,
     });
 }
 function scoreLocalSong(song, params) {
@@ -562,7 +564,7 @@ export async function searchGospelSongs(params) {
         provider: String(params.provider || '').trim(),
         limit,
     };
-    const key = cacheKey('search-v7-resilient', normalizedParams);
+    const key = cacheKey('search-v8-upstream-resilient', normalizedParams);
     const cached = getFromCache(key);
     if (cached && reusableSearchCacheEntry(cached))
         return { ...cached, cached: true, cacheStatus: 'hit' };
@@ -583,6 +585,7 @@ export async function searchGospelSongs(params) {
     const deadline = startedAt + searchBudgetMs();
     let partial = false;
     const providersUsed = [];
+    const providersCompleted = [];
     const providersSkipped = [];
     const providerErrors = [];
 
@@ -628,33 +631,79 @@ export async function searchGospelSongs(params) {
         const primaryQuery = queryVariants[0] || query;
         if (!primaryQuery)
             return [];
-        try {
-            const indexBudget = remainingBudget(providerDeadline, Math.min(2300, budgetMs));
-            if (indexBudget) {
-                const indexed = await searchVagalumeExcerpt(
+        let hadSuccessfulAttempt = false;
+        let lastError = null;
+        const candidateBatches = [];
+
+        // O índice JSON continua sendo o caminho de menor custo. Quando uma chave foi
+        // configurada, ela precisa acompanhar também a busca (não apenas /search.php).
+        // Para consultas curtas, uma página direta de artista é tentada em paralelo: isso
+        // mantém o Proxy útil mesmo quando o endpoint de busca da API estiver restrito.
+        const primaryAttempts = [];
+        const indexBudget = remainingBudget(providerDeadline, config.providers.vagalume.apiKey ? 2400 : 1600);
+        if (indexBudget) {
+            primaryAttempts.push(
+                searchVagalumeExcerpt(
                     config.providers.vagalume.baseUrl,
                     config.providers.vagalume.webBaseUrl,
+                    config.providers.vagalume.apiKey,
                     primaryQuery,
                     limit,
                     Math.min(config.providers.vagalume.timeoutMs, indexBudget)
+                )
+            );
+        }
+        if (!excerptMode) {
+            const artistBudget = remainingBudget(providerDeadline, 2200);
+            if (artistBudget) {
+                primaryAttempts.push(
+                    searchVagalumeArtistPage(
+                        config.providers.vagalume.webBaseUrl,
+                        normalizedParams.artist || normalizedParams.query || normalizedParams.title || primaryQuery,
+                        limit,
+                        Math.min(config.providers.vagalume.timeoutMs, artistBudget)
+                    )
                 );
-                if (indexed.length)
-                    return indexed;
             }
         }
-        catch {
-            // O índice é a rota mais barata. Se indisponível, usa uma única descoberta web.
+        if (primaryAttempts.length) {
+            const outcomes = await Promise.allSettled(primaryAttempts);
+            for (const outcome of outcomes) {
+                if (outcome.status === 'fulfilled') {
+                    hadSuccessfulAttempt = true;
+                    if (outcome.value.length) candidateBatches.push(...outcome.value);
+                }
+                else {
+                    lastError = outcome.reason;
+                }
+            }
+            if (candidateBatches.length)
+                return dedupeResults(candidateBatches, normalizedParams, limit);
         }
-        const webBudget = remainingBudget(providerDeadline, 1900);
-        if (!webBudget)
-            return [];
-        return searchVagalumeWeb(
-            config.providers.vagalume.webBaseUrl,
-            normalizedParams.title || normalizedParams.query || query,
-            normalizedParams.artist,
-            limit,
-            Math.min(config.providers.vagalume.timeoutMs, webBudget)
-        );
+
+        // Fallback web genérico. É secundário porque a página de busca do Vagalume pode
+        // carregar resultados dinamicamente, mas ainda oferece cobertura em mudanças do índice.
+        const webBudget = remainingBudget(providerDeadline, 2200);
+        if (webBudget) {
+            try {
+                const web = await searchVagalumeWeb(
+                    config.providers.vagalume.webBaseUrl,
+                    normalizedParams.title || normalizedParams.query || query,
+                    normalizedParams.artist,
+                    limit,
+                    Math.min(config.providers.vagalume.timeoutMs, webBudget)
+                );
+                hadSuccessfulAttempt = true;
+                if (web.length)
+                    return web;
+            }
+            catch (error) {
+                lastError = error;
+            }
+        }
+        if (!hadSuccessfulAttempt && lastError)
+            throw lastError;
+        return [];
     };
 
     if (query && desiredProvider !== 'built-in' && desiredProvider !== 'database') {
@@ -682,7 +731,7 @@ export async function searchGospelSongs(params) {
                 partial = true;
                 continue;
             }
-            const budgetMs = remainingBudget(deadline, provider === providerPlan[0] ? 2700 : 2500);
+            const budgetMs = remainingBudget(deadline, provider === providerPlan[0] ? 4000 : 3200);
             if (!budgetMs) {
                 providersSkipped.push({ provider, reason: 'BUDGET_EXHAUSTED' });
                 partial = true;
@@ -696,6 +745,7 @@ export async function searchGospelSongs(params) {
                     batch = batch.filter(excerptCandidateMatches).map(result => ({ ...result, lyricsVerified: true }));
                 providerSucceeded(provider);
                 providersUsed.push(provider);
+                providersCompleted.push(provider);
                 results.push(...batch);
                 if (desiredProvider === 'multi-provider' && strongEnough(batch))
                     break;
@@ -715,6 +765,7 @@ export async function searchGospelSongs(params) {
         total: merged.length,
         provider: desiredProvider === 'multi-provider' ? 'dual-source' : desiredProvider,
         providersUsed,
+        providersCompleted,
         providersSkipped,
         providerErrors,
         partial,

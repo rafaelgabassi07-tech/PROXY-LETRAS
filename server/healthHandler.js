@@ -55,7 +55,7 @@ export async function healthFetch(request) {
         providerModes: {
             database: 'local',
             letrasMusBr: config.providers.letrasMusBr.enabled ? 'web-glx' : 'disabled',
-            vagalume: config.providers.vagalume.enabled ? (config.providers.vagalume.apiKey ? 'api+web-glx-fallback' : 'web-glx') : 'disabled',
+            vagalume: config.providers.vagalume.enabled ? (config.providers.vagalume.apiKey ? 'api-index+web-glx-fallback' : 'legacy-index+web-glx-fallback') : 'disabled',
         },
         scraperEngine: {
             name: EXTRACTION_ENGINE_NAME,
@@ -66,8 +66,9 @@ export async function healthFetch(request) {
             'vercel-native-functions',
             'lightweight-health-probe',
             'adaptive-dual-source-search',
-            'letras-primary-title-artist',
-            'vagalume-primary-excerpt',
+            'vagalume-index-and-artist-page-search',
+            'letras-search-fallback',
+            'completion-aware-503',
             ...GLX_CAPABILITIES,
             'bounded-stream-fetch',
             'retry-backoff-jitter',

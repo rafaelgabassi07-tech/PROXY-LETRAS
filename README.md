@@ -1,4 +1,4 @@
-# Gospel Lyrics Proxy 2.10.1
+# Gospel Lyrics Proxy 2.10.2
 
 Produção Vercel consolidada em uma única Function (`api/index.js`) com limpeza automática de rotas legadas no build.
 
@@ -31,9 +31,9 @@ Backend privado para a aba **Letras** do Harpa & Bíblia. Ele centraliza busca, 
 ## Recursos
 
 - fluxo remoto enxuto com apenas **Letras.mus.br + Vagalume**, além da biblioteca local;
-- roteamento adaptativo: **Vagalume `search.excerpt` primeiro para título, artista e trecho**; Letras é fallback quando o índice estruturado não entrega um candidato forte;
+- roteamento adaptativo: **Vagalume `search.excerpt` + página direta de artista para título/artista/trecho**; Letras é fallback quando o índice estruturado não entrega um candidato forte;
 - busca refinada por **título, artista ou trecho da letra**, sem abrir páginas completas de letras durante a listagem;
-- Vagalume usa `search.excerpt` sem credencial para descoberta por trecho e API oficial quando `VAGALUME_API_KEY` estiver configurada;
+- Vagalume encaminha `VAGALUME_API_KEY` também para `search.excerpt` quando configurada e mantém fallback web direto por página de artista;
 - a letra completa é hidratada somente após a seleção do resultado, reduzindo latência e carga externa;
 - GLX Extraction Engine 3.1 com ensemble multi-parser/multi-estratégia, dados estruturados, hydration state, análise estrutural, blocos contextuais e resgate adaptativo;
 - cache TTL limitado em memória e deduplicação de resultados;
@@ -100,11 +100,20 @@ O backend de produção é roteado por arquivos TypeScript dentro de `api/`. Nã
 Use `public`. The build creates `public/index.html` explicitly, while API routes continue through `api/index.js`.
 
 
+## Correção 2.10.2 — upstream resiliente
+
+- `503` só é emitido quando nenhuma fonte remota consegue concluir a consulta;
+- uma fonte concluída com zero resultados + outra com falha retorna `200 partial:true`, não falso timeout;
+- `VAGALUME_API_KEY` passa a ser encaminhada também para `search.excerpt`;
+- consultas curtas podem usar diretamente a página pública do artista no Vagalume como redundância;
+- o APK realiza uma única repetição automática para 429/502/503/504 e diferencia indisponibilidade de timeout;
+- cache de pesquisa migrou para `search-v8-upstream-resilient`.
+
 ## Correção 2.10.1 — cache resiliente
 
 - buscas com `partial:true` nunca são gravadas no cache;
 - buscas vazias (`count:0`) nunca são gravadas no cache;
-- a chave de busca foi migrada para `search-v7-resilient`, invalidando entradas antigas;
+- a chave de busca foi migrada para `search-v8-upstream-resilient`, invalidando entradas antigas;
 - `partial:true + count:0` retorna `503 UPSTREAM_UNAVAILABLE` com `Retry-After: 2`;
 - logs incluem `cacheStatus`, `providersUsed`, `providersSkipped`, `providerErrors` e `upstreamLatencyMs`;
 - Vagalume é a rota primária estruturada; Letras fica como fallback de cobertura.

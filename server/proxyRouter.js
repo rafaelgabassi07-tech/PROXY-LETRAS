@@ -12,6 +12,14 @@ import { LyricsRequestSchema, ProxyConfigUpdateSchema, RawProxyRequestSchema, Se
 import { logger } from './logger.js';
 import { EXTRACTION_ENGINE_NAME, EXTRACTION_ENGINE_VERSION, extractionEngineCapabilities } from './extractionEngine.js';
 const trafficLogs = [];
+
+export function isSearchUpstreamUnavailable(result, provider = 'multi-provider') {
+    const remoteRequested = !['built-in', 'database'].includes(provider || 'multi-provider');
+    const completedProviders = result?.providersCompleted || [];
+    return Number(result?.total || 0) === 0 && remoteRequested && completedProviders.length === 0 &&
+        (((result?.providerErrors?.length || 0) > 0) || ((result?.providersSkipped?.length || 0) > 0));
+}
+
 const rateBuckets = new Map();
 function headerValue(headers, name) {
     const target = name.toLowerCase();
@@ -248,6 +256,7 @@ export function recordLog(log) {
         resultCount: newLog.resultCount,
         cacheStatus: newLog.cacheStatus,
         providersUsed: newLog.providersUsed,
+        providersCompleted: newLog.providersCompleted,
         providersSkipped: newLog.providersSkipped,
         providerErrors: newLog.providerErrors,
         upstreamLatencyMs: newLog.upstreamLatencyMs,
@@ -314,7 +323,7 @@ export async function handleApiRequest(url, method, headers, body) {
                         database: 'local',
                         letrasMusBr: config.providers.letrasMusBr.enabled ? 'web-glx' : 'disabled',
                         vagalume: config.providers.vagalume.enabled
-                            ? (config.providers.vagalume.apiKey ? 'api+web-glx-fallback' : 'web-glx')
+                            ? (config.providers.vagalume.apiKey ? 'api-index+web-glx-fallback' : 'legacy-index+web-glx-fallback')
                             : 'disabled',
                     },
                     scraperEngine: {
@@ -324,8 +333,9 @@ export async function handleApiRequest(url, method, headers, body) {
                     },
                     capabilities: [
                         'adaptive-dual-source-search',
-                        'letras-primary-title-artist',
-                        'vagalume-primary-excerpt',
+                        'vagalume-index-and-artist-page-search',
+                        'letras-search-fallback',
+                        'completion-aware-503',
                         ...extractionEngineCapabilities(),
                         'bounded-stream-fetch',
                         'retry-backoff-jitter',
@@ -358,9 +368,10 @@ export async function handleApiRequest(url, method, headers, body) {
             }
             const result = await searchGospelSongs(queryParams);
             const latency = Date.now() - startTime;
-            // Zero resultado + execução parcial significa indisponibilidade upstream, não uma
-            // busca válida sem correspondências. Não mascara o problema como HTTP 200.
-            const upstreamUnavailable = result.total === 0 && Boolean(result.partial);
+            // 503 só é correto quando NENHUMA fonte remota conseguiu concluir a consulta.
+            // Um provedor pode responder normalmente com zero resultados enquanto o outro falha;
+            // esse caso é degradado/partial, mas continua sendo uma busca HTTP 200 válida.
+            const upstreamUnavailable = isSearchUpstreamUnavailable(result, queryParams.provider || 'multi-provider');
             const status = upstreamUnavailable ? 503 : 200;
             recordLog({
                 method: normalizedMethod,
@@ -376,6 +387,7 @@ export async function handleApiRequest(url, method, headers, body) {
                 cacheStatus: result.cacheStatus,
                 partial: result.partial,
                 providersUsed: result.providersUsed,
+                providersCompleted: result.providersCompleted,
                 providersSkipped: result.providersSkipped,
                 providerErrors: result.providerErrors,
                 resultCount: result.total,
@@ -389,11 +401,12 @@ export async function handleApiRequest(url, method, headers, body) {
                         success: false,
                         code: 'UPSTREAM_UNAVAILABLE',
                         retryable: true,
-                        error: 'As fontes de letras não responderam a tempo. Tente novamente.',
+                        error: 'As fontes de letras estão temporariamente indisponíveis. Tente novamente.',
                         query: queryParams,
                         count: 0,
                         provider: result.provider,
                         providersUsed: result.providersUsed || [],
+                        providersCompleted: result.providersCompleted || [],
                         providersSkipped: result.providersSkipped || [],
                         providerErrors: result.providerErrors || [],
                         cached: false,
@@ -407,7 +420,7 @@ export async function handleApiRequest(url, method, headers, body) {
             return {
                 status,
                 headers: responseHeaders,
-                body: { success: true, query: queryParams, count: result.total, provider: result.provider, providersUsed: result.providersUsed || [], providersSkipped: result.providersSkipped || [], providerErrors: result.providerErrors || [], cached: result.cached, cacheStatus: result.cacheStatus, partial: Boolean(result.partial), latencyMs: latency, data: result.results },
+                body: { success: true, query: queryParams, count: result.total, provider: result.provider, providersUsed: result.providersUsed || [], providersCompleted: result.providersCompleted || [], providersSkipped: result.providersSkipped || [], providerErrors: result.providerErrors || [], cached: result.cached, cacheStatus: result.cacheStatus, partial: Boolean(result.partial), latencyMs: latency, data: result.results },
             };
         }
         if (pathname === '/api/proxy/lyrics/get' && normalizedMethod === 'POST') {

@@ -588,12 +588,15 @@ function parseProviderSearchHtml(html, baseUrl, query, source, limit) {
     }
     return results.sort((a, b) => b.score - a.score).slice(0, limit);
 }
-export async function searchVagalumeExcerpt(apiBaseUrl, webBaseUrl, query, limit, timeoutMs) {
+export async function searchVagalumeExcerpt(apiBaseUrl, webBaseUrl, apiKey, query, limit, timeoutMs) {
     const apiBase = apiBaseUrl.replace(/\/+$/, '');
     const apiHost = new URL(apiBase).hostname;
     const webBase = webBaseUrl.replace(/\/+$/, '');
-    const url = `${apiBase}/search.excerpt?q=${encodeURIComponent(query.trim())}&limit=${Math.max(1, Math.min(limit, 25))}`;
-    const raw = await fetchText(url, timeoutMs, { Accept: 'application/json' }, [apiHost]);
+    const url = new URL(`${apiBase}/search.excerpt`);
+    url.searchParams.set('q', query.trim());
+    url.searchParams.set('limit', String(Math.max(1, Math.min(limit, 25))));
+    if (String(apiKey || '').trim()) url.searchParams.set('apikey', String(apiKey).trim());
+    const raw = await fetchText(url.toString(), timeoutMs, { Accept: 'application/json' }, [apiHost]);
     const data = JSON.parse(raw);
     const docs = Array.isArray(data?.response?.docs) ? data.response.docs : [];
     return docs.map((doc, index) => {
@@ -628,6 +631,57 @@ export async function searchVagalumeExcerpt(apiBaseUrl, webBaseUrl, query, limit
         };
     }).filter(Boolean).slice(0, limit);
 }
+export async function searchVagalumeArtistPage(webBaseUrl, artistOrQuery, limit, timeoutMs) {
+    const normalizedBase = webBaseUrl.replace(/\/+$/, '');
+    const baseHost = new URL(normalizedBase).hostname;
+    const slug = slugifySourcePart(String(artistOrQuery || '').trim());
+    if (!slug)
+        return [];
+    const pageUrl = `${normalizedBase}/${slug}/`;
+    const html = await fetchText(pageUrl, timeoutMs, {}, [baseHost]);
+    const $ = load(html, { scriptingEnabled: false });
+    const h1 = normalizeLyricsText($('h1').first().text().replace(/\s+/g, ' ')).trim();
+    const queryNorm = normalizeSearchText(artistOrQuery);
+    const artistNorm = normalizeSearchText(h1);
+    // Evita transformar um título de música em uma página homônima não relacionada.
+    if (!h1 || (!artistNorm.includes(queryNorm) && !queryNorm.includes(artistNorm)))
+        return [];
+    const seen = new Set();
+    const results = [];
+    $('a[href]').each((_index, element) => {
+        if (results.length >= Math.max(limit * 3, limit))
+            return false;
+        const rawHref = $(element).attr('href') || '';
+        let url;
+        try { url = new URL(rawHref, normalizedBase); } catch { return undefined; }
+        if (!isAllowedLyricsUrl(url.toString(), ['vagalume.com.br']))
+            return undefined;
+        const parts = url.pathname.split('/').filter(Boolean);
+        if (parts.length !== 2 || !/\.html$/i.test(parts[1]))
+            return undefined;
+        const canonical = `${url.origin}${url.pathname}`;
+        if (seen.has(canonical))
+            return undefined;
+        const title = normalizeLyricsText($(element).text().replace(/^\s*\d{1,3}[.)-]?\s*/, '').replace(/\s+/g, ' ')).trim();
+        if (!title || title.length < 2 || title.length > 180)
+            return undefined;
+        if (/^(play|letra|tradu[cç][aã]o|cifra|editar|enviar|ver tudo|top)$/i.test(title))
+            return undefined;
+        seen.add(canonical);
+        results.push({
+            id: stableId('vagalume', canonical),
+            title,
+            artist: h1,
+            preview: `Música de ${h1}.`,
+            source: 'vagalume',
+            sourceUrl: canonical,
+            score: 88 - Math.min(results.length, 30),
+        });
+        return undefined;
+    });
+    return results.slice(0, limit);
+}
+
 export async function searchVagalumeWeb(webBaseUrl, query, artist, limit, timeoutMs) {
     const normalizedBase = webBaseUrl.replace(/\/+$/, '');
     const baseHost = new URL(normalizedBase).hostname;

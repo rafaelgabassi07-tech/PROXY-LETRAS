@@ -1,4 +1,5 @@
 import { healthFetch } from '../server/healthHandler.js';
+import { PROXY_VERSION } from '../server/meta.js';
 
 const ROUTE_PARAM = '__glx_path';
 
@@ -34,7 +35,7 @@ export default {
         code: 'RUNTIME_BOOT_FAILED',
         error: 'O runtime do motor de letras não conseguiu inicializar.',
         diagnostic: String(error?.message || error?.name || 'runtime-import-failed').slice(0, 300),
-        version: '2.10.1'
+        version: PROXY_VERSION
       }, { status: 503, headers: { 'Cache-Control': 'no-store' } });
     }
   }

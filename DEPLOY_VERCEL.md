@@ -1,4 +1,4 @@
-# Deploy no Vercel — Proxy 2.10.1
+# Deploy no Vercel — Proxy 2.10.2
 
 ## Estrutura atual
 
@@ -10,7 +10,7 @@ O health continua com caminho leve. Busca e obtenção de letra carregam o runti
 
 O runtime remoto usa somente **Letras.mus.br + Vagalume**. O valor `multi-provider` permanece no contrato HTTP para compatibilidade, mas significa roteamento adaptativo entre essas duas fontes:
 
-- título/artista/trecho: Vagalume `search.excerpt` primeiro; Letras somente como fallback;
+- título/artista/trecho: Vagalume `search.excerpt`/página de artista; Letras como fallback;
 - trecho: Vagalume `search.excerpt` primeiro; Letras somente se necessário;
 - a listagem não abre páginas completas de letras;
 - a hidratação da letra completa ocorre em `/api/proxy/lyrics/get` após o usuário selecionar um resultado.
@@ -23,9 +23,9 @@ O runtime remoto usa somente **Letras.mus.br + Vagalume**. O valor `multi-provid
 - Build Command: o `vercel.json` usa `echo GLX_NO_BUILD_REQUIRED`
 - Output Directory: `public`
 - Node.js: 24.x (definido em `package.json`)
-- `LYRICS_SEARCH_BUDGET_MS`: opcional; padrão 5200 ms, faixa 3200–9000 ms
+- `LYRICS_SEARCH_BUDGET_MS`: opcional; padrão 7600 ms, faixa 3200–9000 ms
 - `LYRICS_GET_BUDGET_MS`: opcional; padrão 8500 ms, faixa 5000–12000 ms
-- `VAGALUME_API_KEY`: opcional; a busca por trecho funciona sem chave pelo índice público
+- `VAGALUME_API_KEY`: recomendada para a API oficial; sem chave, o Proxy usa os fallbacks web das duas fontes
 
 ## Git / upload
 
@@ -41,6 +41,13 @@ Faça o deploy da pasta raiz deste Proxy, mantendo `api/`, `server/`, `public/`,
 6. Simule falha/resultado vazio da fonte primária e confirme que apenas então a segunda fonte aparece em `providersUsed`.
 
 
-### Após publicar 2.10.1
+### Após publicar 2.10.2
 
-Não é necessário limpar manualmente o cache antigo: a chave de busca mudou para `search-v7-resilient`. Para confirmar a correção, um log de busca válida deve mostrar `cacheStatus:"stored"` na primeira consulta e `cacheStatus:"hit"` nas seguintes. Se as fontes falharem, o log deve mostrar HTTP 503, `cached:false` e `cacheStatus:"bypass-partial"`; esse resultado jamais deve virar cache hit.
+Não é necessário limpar manualmente o cache antigo: a chave de busca mudou para `search-v8-upstream-resilient`. Para confirmar a correção, um log de busca válida deve mostrar `cacheStatus:"stored"` na primeira consulta e `cacheStatus:"hit"` nas seguintes. Se as fontes falharem, o log deve mostrar HTTP 503, `cached:false` e `cacheStatus:"bypass-partial"`; esse resultado jamais deve virar cache hit.
+
+
+### Diagnóstico esperado no 2.10.2
+
+- `status:200, partial:true, providersCompleted:[...]`: ao menos uma fonte concluiu; não é timeout.
+- `status:503, providersCompleted:[]`: nenhuma fonte remota concluiu; resposta é `retryable:true` e não entra em cache.
+- `providersUsed`, `providersCompleted`, `providersSkipped` e `providerErrors` identificam exatamente a etapa degradada.
