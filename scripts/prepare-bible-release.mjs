@@ -11,7 +11,7 @@ const REPOSITORY = process.env.BIBLE_RELEASE_REPOSITORY || 'rafaelgabassi07-tech
 const INPUT = path.resolve(inputArg);
 const OUTPUT = path.resolve(outputArg);
 const RELEASE_TAG = tagArg.trim();
-const NATIVE_TRANSLATION = 'ACF';
+const EXCLUDED_TRANSLATIONS = new Set(['ACF', 'MENS', 'NTLH']);
 
 const DISPLAY_NAMES = {
   ALM1911: 'Almeida 1911',
@@ -22,10 +22,8 @@ const DISPLAY_NAMES = {
   JFAA: 'Almeida Atualizada',
   KJA: 'King James Atualizada',
   KJF: 'King James Fiel',
-  MENS: 'A Mensagem',
   NAA: 'Nova Almeida Atualizada',
   NBV: 'Nova Bíblia Viva',
-  NTLH: 'Nova Tradução na Linguagem de Hoje',
   NVI: 'Nova Versão Internacional',
   NVT: 'Nova Versão Transformadora',
   OL: 'O Livro',
@@ -46,7 +44,7 @@ if (!sqliteFiles.length) {
 
 for (const fileName of sqliteFiles) {
   const id = path.basename(fileName, path.extname(fileName)).toUpperCase();
-  if (id === NATIVE_TRANSLATION) continue;
+  if (EXCLUDED_TRANSLATIONS.has(id)) continue;
 
   const source = path.join(INPUT, fileName);
   const targetName = `${id}.sqlite`;
@@ -67,7 +65,7 @@ const catalog = {
   schemaVersion: 1,
   catalogVersion: 1,
   releaseTag: RELEASE_TAG,
-  nativeTranslation: NATIVE_TRANSLATION,
+  nativeTranslation: 'ACF',
   translations
 };
 
