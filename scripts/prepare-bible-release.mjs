@@ -1,5 +1,6 @@
 import fs from 'node:fs';
 import path from 'node:path';
+import { DatabaseSync } from 'node:sqlite';
 
 const [inputArg, outputArg, tagArg = 'bibles-v1'] = process.argv.slice(2);
 if (!inputArg || !outputArg) {
@@ -31,16 +32,28 @@ const DISPLAY_NAMES = {
   VFL: 'Versão Fácil de Ler'
 };
 
-fs.mkdirSync(OUTPUT, { recursive: true });
+const NOTES = {
+  BLIVRE: 'Mantém a numeração da fonte; Salmo 46 agrupa o conteúdo dos versículos 2–3 no registro 2.',
+  OL: 'A edição de origem agrupa vários versículos; a numeração não é contínua em alguns capítulos.',
+  VFL: 'Segue a numeração da edição de origem, que não contém alguns números de versículos presentes em outras tradições textuais.'
+};
 
+function verseCount(file) {
+  const db = new DatabaseSync(file, { readOnly: true });
+  try {
+    return Number(db.prepare('SELECT COUNT(*) AS total FROM verse').get().total);
+  } finally {
+    db.close();
+  }
+}
+
+fs.mkdirSync(OUTPUT, { recursive: true });
 const translations = [];
 const sqliteFiles = fs.readdirSync(INPUT)
   .filter((name) => name.toLowerCase().endsWith('.sqlite'))
   .sort((a, b) => a.localeCompare(b));
 
-if (!sqliteFiles.length) {
-  throw new Error(`Nenhum .sqlite encontrado em ${INPUT}`);
-}
+if (!sqliteFiles.length) throw new Error(`Nenhum .sqlite encontrado em ${INPUT}`);
 
 for (const fileName of sqliteFiles) {
   const id = path.basename(fileName, path.extname(fileName)).toUpperCase();
@@ -51,29 +64,29 @@ for (const fileName of sqliteFiles) {
   const target = path.join(OUTPUT, targetName);
   fs.copyFileSync(source, target);
 
-  translations.push({
+  const item = {
     id,
     name: DISPLAY_NAMES[id] || id,
     version: 1,
     fileName: targetName,
     downloadUrl: `https://github.com/${REPOSITORY}/releases/download/${RELEASE_TAG}/${targetName}`,
+    sizeBytes: fs.statSync(target).size,
+    verseCount: verseCount(target),
     enabled: true
-  });
+  };
+  if (NOTES[id]) item.note = NOTES[id];
+  translations.push(item);
 }
 
 const catalog = {
   schemaVersion: 1,
-  catalogVersion: 1,
+  catalogVersion: 2,
   releaseTag: RELEASE_TAG,
   nativeTranslation: 'ACF',
+  format: 'sqlite',
   translations
 };
 
-fs.writeFileSync(
-  path.join(OUTPUT, 'catalog.json'),
-  `${JSON.stringify(catalog, null, 2)}\n`,
-  'utf8'
-);
-
+fs.writeFileSync(path.join(OUTPUT, 'catalog.json'), `${JSON.stringify(catalog, null, 2)}\n`, 'utf8');
 console.log(`Preparadas ${translations.length} traduções para ${RELEASE_TAG}.`);
 console.log(`Arquivos em: ${OUTPUT}`);
