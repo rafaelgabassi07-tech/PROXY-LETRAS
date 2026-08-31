@@ -1,20 +1,20 @@
 # Distribuição das Bíblias pelo mesmo GitHub do Proxy
 
-Este diretório contém apenas o catálogo/metadados usados pelo APK. Os bancos SQLite **não devem ser commitados no branch `main`** e não precisam passar pela Vercel.
+Os bancos bíblicos ficam nos **GitHub Releases** do mesmo repositório. Eles não passam pela Vercel e não devem ser commitados no branch `main`.
 
-## Arquitetura
+## Fluxo simplificado
 
 ```text
 APK
  ├─ GET https://raw.githubusercontent.com/rafaelgabassi07-tech/PROXY-LETRAS/main/bibles/catalog.json
- └─ download direto dos assets da Release bibles-v1
-      ├─ NVI.sqlite.gz
-      ├─ NAA.sqlite.gz
-      ├─ NVT.sqlite.gz
-      └─ ...
+ └─ baixa diretamente o .sqlite escolhido no GitHub Release
+      ↓
+   salva no armazenamento privado do app
+      ↓
+   tradução instalada
 ```
 
-O Proxy de Letras e a Vercel continuam independentes. O APK consulta o catálogo pelo GitHub e baixa cada Bíblia diretamente do GitHub Releases.
+Não há SHA-256, checksum, GZIP ou validação pesada no fluxo de instalação. O APK apenas precisa tratar normalmente falha de rede, cancelamento ou erro ao abrir o arquivo.
 
 ## Primeira Release
 
@@ -22,73 +22,89 @@ Tag: `bibles-v1`
 
 Título sugerido: `Bíblias SQLite v1`
 
-Os arquivos da primeira Release devem ser enviados como assets individuais, por exemplo:
+Envie os arquivos `.sqlite` individualmente como assets da Release, por exemplo:
 
-- `ALM1911.sqlite.gz`
-- `ARA.sqlite.gz`
-- `ARC.sqlite.gz`
-- `AS21.sqlite.gz`
-- `BLIVRE.sqlite.gz`
-- `JFAA.sqlite.gz`
-- `KJA.sqlite.gz`
-- `KJF.sqlite.gz`
-- `NAA.sqlite.gz`
-- `NBV.sqlite.gz`
-- `NVI.sqlite.gz`
-- `NVT.sqlite.gz`
-- `OL.sqlite.gz`
-- `TB.sqlite.gz`
-- `VFL.sqlite.gz`
+- `ALM1911.sqlite`
+- `ARA.sqlite`
+- `ARC.sqlite`
+- `AS21.sqlite`
+- `BLIVRE.sqlite`
+- `JFAA.sqlite`
+- `KJA.sqlite`
+- `KJF.sqlite`
+- `NAA.sqlite`
+- `NBV.sqlite`
+- `NVI.sqlite`
+- `NVT.sqlite`
+- `OL.sqlite`
+- `TB.sqlite`
+- `VFL.sqlite`
 
-A ACF permanece nativa no APK e não precisa ser baixada.
+A ACF permanece nativa no APK.
 
-`MENS.sqlite` e `NTLH.sqlite` devem ficar fora da primeira Release até revisão dos dados. A validação atual encontrou 13.055 versículos em MENS e 1.203 pares livro/capítulo em NTLH, enquanto o conjunto canônico esperado pelo APK usa 1.189 capítulos.
+MENS e NTLH continuam fora do catálogo atual por inconsistências de conteúdo identificadas anteriormente; isso é uma questão de qualidade dos bancos, não de segurança de download.
 
 ## Passo a passo no GitHub
 
-1. Abra o repositório `rafaelgabassi07-tech/PROXY-LETRAS`.
-2. Clique em **Releases**.
+1. Abra `rafaelgabassi07-tech/PROXY-LETRAS`.
+2. Entre em **Releases**.
 3. Clique em **Draft a new release**.
-4. Em **Choose a tag**, crie `bibles-v1` a partir de `main`.
+4. Crie a tag `bibles-v1` a partir de `main`.
 5. Use o título `Bíblias SQLite v1`.
-6. Arraste os arquivos `*.sqlite.gz` preparados para a área de assets.
-7. Publique a Release.
-8. Teste pelo navegador pelo menos uma URL, por exemplo:
-   `https://github.com/rafaelgabassi07-tech/PROXY-LETRAS/releases/download/bibles-v1/NVI.sqlite.gz`
-9. Depois que os links estiverem funcionando, altere `published` de `false` para `true` em `bibles/catalog.json`.
+6. Arraste os arquivos `.sqlite` individualmente para os assets.
+7. Clique em **Publish release**.
+8. Teste no navegador, por exemplo:
+   `https://github.com/rafaelgabassi07-tech/PROXY-LETRAS/releases/download/bibles-v1/NVI.sqlite`
 
-## URL que o APK deve consultar
+## Catálogo usado pelo APK
 
 ```text
 https://raw.githubusercontent.com/rafaelgabassi07-tech/PROXY-LETRAS/main/bibles/catalog.json
 ```
 
-O APK não precisa conhecer as URLs de cada tradução em código. Ele lê o catálogo e usa o campo `downloadUrl` da tradução escolhida.
+Cada item contém apenas o necessário:
 
-## Preparar uma nova versão
+```json
+{
+  "id": "NVI",
+  "name": "Nova Versão Internacional",
+  "version": 1,
+  "fileName": "NVI.sqlite",
+  "downloadUrl": "https://github.com/rafaelgabassi07-tech/PROXY-LETRAS/releases/download/bibles-v1/NVI.sqlite",
+  "enabled": true
+}
+```
 
-O script `scripts/prepare-bible-release.mjs` recebe uma pasta contendo os `.sqlite`, valida a estrutura principal, compacta em GZIP, calcula SHA-256 e gera o catálogo/checksums.
+O APK não precisa conhecer cada URL em código. Ele lê `catalog.json`, mostra as traduções com `enabled: true` e usa `downloadUrl` quando o usuário toca em Baixar.
 
-Exemplo:
+## Preparar uma nova Release
+
+O script `scripts/prepare-bible-release.mjs` agora apenas copia os `.sqlite` e gera o catálogo. Não calcula hash e não comprime.
 
 ```bash
 node scripts/prepare-bible-release.mjs ./biblias-sqlite ./dist/bibles-v1 bibles-v1
 ```
 
-Para uma atualização futura, use outra tag, por exemplo `bibles-v2`, gere os assets novamente e então atualize `bibles/catalog.json`.
+Para uma atualização futura, use uma nova tag, por exemplo `bibles-v2`, e atualize o `bibles/catalog.json` depois de publicar os novos assets.
 
-## Validação no APK
+## Implementação mínima no APK
 
-Antes de instalar um banco baixado, o APK deverá verificar:
+Ao tocar em **Baixar**:
 
-1. download concluído para arquivo temporário;
-2. SHA-256 do `.gz` igual ao campo `sha256` do catálogo;
-3. descompactação para `.sqlite.tmp`;
-4. SHA-256 do SQLite igual a `databaseSha256`;
-5. `PRAGMA quick_check` igual a `ok`;
-6. tabelas `metadata`, `book` e `verse` presentes;
-7. somente depois, instalação/renomeação atômica do banco.
+```text
+downloadUrl
+   ↓
+baixa NVI.sqlite
+   ↓
+salva na pasta privada de Bíblias
+   ↓
+registra NVI como instalada
+   ↓
+abre normalmente pelo BibleRepository
+```
+
+Se a conexão falhar, o app mostra erro e permite tentar novamente. Não é necessário usar Vercel ou o Proxy de Letras nesse caminho.
 
 ## Licenças
 
-Validação técnica do SQLite não significa autorização de redistribuição. Antes de tornar `published: true` e disponibilizar cada tradução publicamente, confirme a licença/direito de distribuição do texto correspondente.
+A hospedagem ser sua não altera os direitos de redistribuição do texto bíblico. Publique apenas traduções que você possa legalmente redistribuir.
